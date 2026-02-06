@@ -78,6 +78,7 @@ export type Route = {
   distanceKm?: number;
   interfaceItem?: string;
   onlineValue?: string;
+  capacityItem?: string;
   metrics: RouteMetric[];
   extraMetrics: RouteExtraMetric[];
   trunks: TransportTrunk[];

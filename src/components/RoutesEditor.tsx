@@ -32,6 +32,7 @@ const createEmptyRoute = (): Route => ({
   distanceKm: undefined,
   interfaceItem: '',
   onlineValue: '1',
+  capacityItem: '',
   metrics: DEFAULT_METRICS.map((m) => ({ ...m })),
   extraMetrics: [],
   trunks: [],
@@ -705,6 +706,18 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
                 />
               </Field>
 
+              <Field label="Capacidade total (item Zabbix)" description="Item com a capacidade total do enlace">
+                <Select
+                  options={zabbixItemOptions}
+                  value={getSelectValue(draftRoute.capacityItem, zabbixItemOptions)}
+                  allowCustomValue
+                  isClearable
+                  placeholder="Selecione um item"
+                  onChange={(option) => this.updateDraft({ capacityItem: option?.value ?? '' })}
+                  onCreateOption={(value) => this.updateDraft({ capacityItem: value })}
+                />
+              </Field>
+
               <div>
                 <Button icon="map-marker" onClick={this.openDrawModal}>
                   Desenhar rota no mapa
@@ -854,57 +867,6 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
                               </Field>
                             </Stack>
 
-                            <div style={{ marginTop: 6 }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                                Metricas adicionais da interface
-                              </div>
-                              {(iface.metrics ?? []).length === 0 ? (
-                                <div style={{ fontSize: 12, marginBottom: 6 }}>Nenhuma metrica configurada</div>
-                              ) : (
-                                <Stack direction="column" gap={2}>
-                                  {(iface.metrics ?? []).map((metric) => (
-                                    <Stack key={metric.id} direction="row" gap={2} alignItems="center">
-                                      <Input
-                                        placeholder="Nome da metrica"
-                                        value={metric.label}
-                                        onChange={(e) =>
-                                          this.updateInterfaceMetric(trunk.id, iface.id, metric.id, {
-                                            label: e.currentTarget.value,
-                                          })
-                                        }
-                                      />
-                                      <Select
-                                        options={zabbixItemOptions}
-                                        value={getSelectValue(metric.item, zabbixItemOptions)}
-                                        allowCustomValue
-                                        isClearable
-                                        placeholder="Item"
-                                        onChange={(option) =>
-                                          this.updateInterfaceMetric(trunk.id, iface.id, metric.id, {
-                                            item: option?.value ?? '',
-                                          })
-                                        }
-                                        onCreateOption={(value) =>
-                                          this.updateInterfaceMetric(trunk.id, iface.id, metric.id, { item: value })
-                                        }
-                                      />
-                                      <Button
-                                        size="sm"
-                                        variant="destructive"
-                                        onClick={() => this.removeInterfaceMetric(trunk.id, iface.id, metric.id)}
-                                      >
-                                        Remover
-                                      </Button>
-                                    </Stack>
-                                  ))}
-                                </Stack>
-                              )}
-                              <div style={{ marginTop: 6 }}>
-                                <Button size="sm" onClick={() => this.addInterfaceMetric(trunk.id, iface.id)}>
-                                  + Adicionar metrica
-                                </Button>
-                              </div>
-                            </div>
                           </Stack>
                         ))}
                       </Stack>

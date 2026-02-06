@@ -790,19 +790,26 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const [filterTerm, setFilterTerm] = React.useState('');
   const [showSuggestions, setShowSuggestions] = React.useState(false);
   const mapRef = React.useRef<L.Map | null>(null);
+  const fullscreenRef = React.useRef(false);
   const [selectedRouteId, setSelectedRouteId] = React.useState<string | null>(null);
   const [selectedPopId, setSelectedPopId] = React.useState<string | null>(null);
+  const [selectedLinkSide, setSelectedLinkSide] = React.useState<string | null>(null);
   const [rxHistory, setRxHistory] = React.useState<{
     name: string;
     series?: { values: number[]; times: number[] };
   } | null>(null);
-  const [badgeScaleOverride, setBadgeScaleOverride] = React.useState(1);
+  const [badgeScaleOverride, setBadgeScaleOverride] = React.useState(0.01);
   const [dashTick, setDashTick] = React.useState(0);
   const [hitboxReady, setHitboxReady] = React.useState(false);
   const [lastInteraction, setLastInteraction] = React.useState(0);
   const [autoFocusIndex, setAutoFocusIndex] = React.useState(0);
   const [statsCollapsed, setStatsCollapsed] = React.useState(true);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const linkCardRef = React.useRef<HTMLDivElement | null>(null);
+  const leftListRef = React.useRef<HTMLDivElement | null>(null);
+  const rightListRef = React.useRef<HTMLDivElement | null>(null);
+  const linkCenterRef = React.useRef<HTMLDivElement | null>(null);
+  const [linkLayout, setLinkLayout] = React.useState({ leftX: 0, rightX: 0, top: 0, height: 0, leftListTop: 0 });
   const normalizedSearch = filterTerm.trim().toLowerCase();
   const itemValueMap = React.useMemo(
     () => buildItemValueMap(data?.series ?? [], theme, timeZone),
@@ -817,6 +824,62 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const autoFocusPauseMs = 15000;
   const autoFocusIntervalMs = 8000;
   const autoFocusMaxZoom = 12;
+
+  React.useEffect(() => {
+    const handler = () => {
+      const map = mapRef.current;
+      if (!map) {
+        return;
+      }
+      const isFullscreen = Boolean(document.fullscreenElement);
+      if (fullscreenRef.current !== isFullscreen) {
+        fullscreenRef.current = isFullscreen;
+        setTimeout(() => {
+          map.invalidateSize();
+          const current = map.getCenter();
+          map.setView([current.lat, current.lng], map.getZoom(), { animate: false });
+        }, 120);
+      }
+    };
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  React.useEffect(() => {
+    const update = () => {
+      if (!linkCardRef.current || !leftListRef.current || !rightListRef.current || !linkCenterRef.current) {
+        return;
+      }
+      const containerRect = linkCardRef.current.getBoundingClientRect();
+      const leftRect = leftListRef.current.getBoundingClientRect();
+      const rightRect = rightListRef.current.getBoundingClientRect();
+      const centerRect = linkCenterRef.current.getBoundingClientRect();
+      setLinkLayout({
+        leftX: leftRect.right - centerRect.left,
+        rightX: rightRect.left - centerRect.left,
+        top: leftRect.top - containerRect.top,
+        height: leftRect.height,
+        leftListTop: leftRect.top - containerRect.top,
+      });
+    };
+
+    update();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(update);
+      if (linkCardRef.current) {
+        ro.observe(linkCardRef.current);
+      }
+      if (leftListRef.current) {
+        ro.observe(leftListRef.current);
+      }
+      if (rightListRef.current) {
+        ro.observe(rightListRef.current);
+      }
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [selectedRouteId]);
 
   const tileConfig = (() => {
     switch (options.mapProvider) {
@@ -948,6 +1011,7 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     (item?: string) => (item ? itemValueMap.get(item) : undefined),
     [itemValueMap]
   );
+  const selectedRouteCapacity = selectedRoute?.capacityItem ? getMetricValue(selectedRoute.capacityItem) : undefined;
 
   const getNumericValue = React.useCallback(
     (item?: string) => {
@@ -1395,6 +1459,13 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
             color: #e2e8f0;
             letter-spacing: 0.3px;
           }
+          .jmap-fiber-line {
+            animation: jmap-fiber-flow 1.2s linear infinite;
+          }
+          @keyframes jmap-fiber-flow {
+            0% { stroke-dashoffset: 0; }
+            100% { stroke-dashoffset: -28; }
+          }
           @keyframes jmap-badge-pulse {
             0%, 100% { box-shadow: 0 10px 22px rgba(0,0,0,0.28); }
             50% { box-shadow: 0 14px 26px rgba(16, 185, 129, 0.25); }
@@ -1527,6 +1598,14 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           }
           if (!document.fullscreenElement) {
             container.requestFullscreen?.();
+            const map = mapRef.current;
+            if (map) {
+              setTimeout(() => {
+                map.invalidateSize();
+                const current = map.getCenter();
+                map.setView([current.lat, current.lng], map.getZoom(), { animate: false });
+              }, 120);
+            }
             return;
           }
           document.exitFullscreen?.();
@@ -1639,8 +1718,22 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                   >
                     {selectedRouteStatusLabel}
                   </span>
-                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                    Interface de status: {selectedRoute.interfaceItem || '--'}
+                </div>
+              </div>
+              <div
+                style={{
+                  border: `1px solid ${theme.colors.border.weak}`,
+                  borderRadius: 10,
+                  padding: 10,
+                  background: theme.colors.background.secondary,
+                }}
+              >
+                <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                  Capacidade total
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>
+                    {selectedRouteCapacity?.text ?? '--'} GB
                   </div>
                 </div>
               </div>
@@ -1649,8 +1742,8 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
 
             <div
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                display: 'flex',
+                flexDirection: 'column',
                 gap: 12,
                 overflowY: 'auto',
                 paddingRight: 4,
@@ -1662,122 +1755,218 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                   borderRadius: 10,
                   padding: 12,
                   background: theme.colors.background.secondary,
+                  position: 'relative',
                 }}
+                ref={linkCardRef}
               >
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Sinais em tempo real (TX/RX)</div>
-                {(selectedRoute.trunks ?? []).length === 0 ? (
-                  <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum trunk cadastrado</div>
-                ) : (
-                  selectedRoute.trunks.map((trunk) => (
-                    <div key={trunk.id} style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600 }}>{trunk.name || 'Trunk sem nome'}</div>
-                      {trunk.description ? (
-                        <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 }}>
-                          {trunk.description}
-                        </div>
-                      ) : null}
-                      {trunk.interfaces.length === 0 ? (
-                        <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Sem interfaces</div>
-                      ) : (
-                        trunk.interfaces.map((iface) => {
-                          const txValue = iface.txItem ? getMetricValue(iface.txItem) : undefined;
-                          const rxValue = iface.rxItem ? getMetricValue(iface.rxItem) : undefined;
-                          return (
-                            <div
-                              key={iface.id}
-                              style={{
-                                border: `1px solid ${theme.colors.border.weak}`,
-                                borderRadius: 8,
-                                padding: 8,
-                                marginTop: 8,
-                                background: theme.colors.background.primary,
-                              }}
-                            >
-                              <div
+                {(() => {
+                  const trunks = selectedRoute.trunks ?? [];
+                  if (trunks.length === 0) {
+                    return <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum trunk cadastrado</div>;
+                  }
+                  const leftTrunk = trunks[0];
+                  const rightTrunk = trunks[1] ?? null;
+                  const allSides = [
+                    ...leftTrunk.interfaces.map((iface) => iface.side).filter(Boolean),
+                    ...(rightTrunk?.interfaces.map((iface) => iface.side).filter(Boolean) ?? []),
+                  ] as Array<'A' | 'B' | 'C' | 'D' | 'E'>;
+                  const sides = Array.from(new Set(allSides));
+                  const leftBySide = new Map(
+                    sides.map((side) => [side, leftTrunk.interfaces.find((i) => i.side === side)])
+                  );
+                  const rightBySide = rightTrunk
+                    ? new Map(sides.map((side) => [side, rightTrunk.interfaces.find((i) => i.side === side)]))
+                    : new Map();
+                  const rowHeight = 46;
+                  const rowGap = 8;
+                  const rowsHeight = sides.length * rowHeight + Math.max(0, sides.length - 1) * rowGap;
+                  return (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: rightTrunk ? '1fr 260px 1fr' : '1fr',
+                        gridTemplateRows: rightTrunk ? 'auto 1fr' : 'auto',
+                        gap: 12,
+                        alignItems: 'stretch',
+                      }}
+                    >
+                      <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>{leftTrunk.name || 'Cidade 1'}</div>
+                        {leftTrunk.description ? (
+                          <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 }}>
+                            {leftTrunk.description}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div ref={leftListRef} style={{ marginTop: 8, display: 'grid', gap: rowGap, gridColumn: '1 / 2', gridRow: '2 / 3' }}>
+                          {sides.map((side) => {
+                            const iface = leftBySide.get(side);
+                            const txValue = iface?.txItem ? getMetricValue(iface.txItem) : undefined;
+                            const rxValue = iface?.rxItem ? getMetricValue(iface.rxItem) : undefined;
+                            return (
+                              <button
+                                key={`left-${side}`}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedLinkSide(side);
+                                  if (iface?.rxItem) {
+                                    const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
+                                    setRxHistory({
+                                      name: iface.name || 'Interface',
+                                      series,
+                                    });
+                                  }
+                                }}
                                 style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  gap: 12,
-                                  flexWrap: 'wrap',
+                                  height: rowHeight,
+                                  border: `1px solid ${theme.colors.border.weak}`,
+                                  borderRadius: 8,
+                                  padding: '6px 8px',
+                                  background:
+                                    selectedLinkSide === side ? theme.colors.background.canvas : theme.colors.background.primary,
+                                  color: theme.colors.text.primary,
+                                  cursor: 'pointer',
+                                  textAlign: 'left',
                                 }}
                               >
-                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                                  <div style={{ fontSize: 12, fontWeight: 600 }}>
-                                    {iface.name || 'Interface'} {iface.side ? `(${iface.side})` : ''}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
+                                  <div style={{ fontWeight: 600 }}>
+                                    {iface?.name || '--'} <span style={{ color: theme.colors.text.secondary }}>({side})</span>
                                   </div>
-                                  {iface.description ? (
-                                    <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                                      {iface.description}
-                                    </div>
-                                  ) : null}
+                                  <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
+                                    <span>TX: <strong>{txValue?.text ?? '--'}</strong></span>
+                                    <span>RX: <strong>{rxValue?.text ?? '--'}</strong></span>
+                                  </div>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11 }}>
-                                  {iface.showTx === false ? null : (
-                                    <span>
-                                      TX: <span style={{ fontWeight: 600 }}>{txValue?.text ?? '--'}</span>
-                                    </span>
-                                  )}
-                                  {iface.showRx === false ? null : (
-                                    <span>
-                                      RX: <span style={{ fontWeight: 600 }}>{rxValue?.text ?? '--'}</span>
-                                    </span>
-                                  )}
-                                  {iface.showRx !== false && iface.rxItem && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
-                                        setRxHistory({
-                                          name: iface.name || 'Interface',
-                                          series,
-                                        });
-                                      }}
-                                      style={{
-                                        background: 'transparent',
-                                        border: `1px solid ${theme.colors.border.weak}`,
-                                        color: theme.colors.text.primary,
-                                        fontSize: 10,
-                                        padding: '2px 6px',
-                                        borderRadius: 6,
-                                        cursor: 'pointer',
-                                      }}
-                                    >
-                                      Historico
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                              {(iface.metrics ?? []).length > 0 && (
-                                <div style={{ marginTop: 6 }}>
-                                  {(iface.metrics ?? []).map((metric) => {
-                                    const value = metric.item ? getMetricValue(metric.item) : undefined;
-                                    return (
-                                      <div
-                                        key={metric.id}
-                                        style={{
-                                          display: 'flex',
-                                          justifyContent: 'space-between',
-                                          fontSize: 11,
-                                          color: theme.colors.text.secondary,
-                                        }}
-                                      >
-                                        <span>{metric.label || 'Metrica'}</span>
-                                        <span style={{ color: theme.colors.text.primary, fontWeight: 600 }}>
-                                          {value?.text ?? '--'}
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                              </button>
+                            );
+                          })}
+                      </div>
+
+                      {rightTrunk && (
+                        <>
+                          <div style={{ gridColumn: '3 / 4', gridRow: '1 / 2' }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
+                              {rightTrunk.name || 'Cidade 2'}
                             </div>
-                          );
-                        })
+                            {rightTrunk.description ? (
+                              <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2, textAlign: 'right' }}>
+                                {rightTrunk.description}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div ref={rightListRef} style={{ marginTop: 8, display: 'grid', gap: rowGap, gridColumn: '3 / 4', gridRow: '2 / 3' }}>
+                            {sides.map((side) => {
+                              const iface = rightBySide.get(side);
+                              const txValue = iface?.txItem ? getMetricValue(iface.txItem) : undefined;
+                              const rxValue = iface?.rxItem ? getMetricValue(iface.rxItem) : undefined;
+                              return (
+                              <button
+                                key={`right-${side}`}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedLinkSide(side);
+                                  if (iface?.rxItem) {
+                                    const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
+                                    setRxHistory({
+                                      name: iface.name || 'Interface',
+                                      series,
+                                    });
+                                  }
+                                }}
+                                style={{
+                                  height: rowHeight,
+                                    border: `1px solid ${theme.colors.border.weak}`,
+                                    borderRadius: 8,
+                                    padding: '6px 8px',
+                                    background:
+                                      selectedLinkSide === side ? theme.colors.background.canvas : theme.colors.background.primary,
+                                    color: theme.colors.text.primary,
+                                    cursor: 'pointer',
+                                    textAlign: 'left',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
+                                    <div style={{ fontWeight: 600 }}>
+                                      {iface?.name || '--'} <span style={{ color: theme.colors.text.secondary }}>({side})</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
+                                      <span>TX: <strong>{txValue?.text ?? '--'}</strong></span>
+                                      <span>RX: <strong>{rxValue?.text ?? '--'}</strong></span>
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div
+                            ref={linkCenterRef}
+                            style={{
+                              gridColumn: '2 / 3',
+                              gridRow: '2 / 3',
+                              position: 'relative',
+                              minHeight: rowsHeight,
+                              marginTop: 8,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            <svg
+                              width={Math.max(0, linkLayout.rightX - linkLayout.leftX)}
+                              height={rowsHeight}
+                              viewBox={`0 0 ${Math.max(0, linkLayout.rightX - linkLayout.leftX)} ${rowsHeight}`}
+                              preserveAspectRatio="none"
+                              style={{
+                                position: 'absolute',
+                                left: linkLayout.leftX,
+                                top: 0,
+                              }}
+                            >
+                              {sides.map((side, idx) => {
+                                const leftIface = leftBySide.get(side);
+                                const rightIface = rightBySide.get(side);
+                                if (!leftIface || !rightIface) {
+                                  return null;
+                                }
+                                const leftRx = leftIface.rxItem ? getNumericValue(leftIface.rxItem) : null;
+                                const rightRx = rightIface.rxItem ? getNumericValue(rightIface.rxItem) : null;
+                                const down = (leftRx !== null && leftRx <= -35) || (rightRx !== null && rightRx <= -35);
+                                const y = idx * (rowHeight + rowGap) + rowHeight / 2;
+                                const width = Math.max(0, linkLayout.rightX - linkLayout.leftX);
+                                const color = down ? '#ef4444' : '#22c55e';
+                                return (
+                                  <g key={`link-${side}`}>
+                                    <line
+                                    x1={0}
+                                    y1={y}
+                                    x2={width}
+                                    y2={y}
+                                    stroke={color}
+                                    strokeWidth={2.5}
+                                    strokeDasharray="8 6"
+                                    className="jmap-fiber-line"
+                                  />
+                                  <circle cx={0} cy={y} r="4" fill={color} />
+                                  <circle cx={width} cy={y} r="4" fill={color} />
+                                  <text
+                                    x={width / 2}
+                                    y={y - 6}
+                                    textAnchor="middle"
+                                    fill={theme.colors.text.secondary}
+                                    fontSize="10"
+                                  >
+                                    {side}
+                                  </text>
+                                </g>
+                              );
+                            })}
+                            </svg>
+                          </div>
+                        </>
                       )}
                     </div>
-                  ))
-                )}
+                  );
+                })()}
               </div>
 
               <div
@@ -2280,22 +2469,17 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
               </div>
             ))
           )}
-          <div style={{ fontSize: 11, fontWeight: 600, margin: '8px 0 6px' }}>Top oscilacao (RX)</div>
-          {opticalStats.worstOsc.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>Sem dados de oscilacao</div>
-          ) : (
-            opticalStats.worstOsc.map((entry) => (
-              <div key={`osc-${entry.name}`} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span>{entry.name}</span>
-                <span>{formatNumber(entry.spread)} dB</span>
-              </div>
-            ))
-          )}
           </div>
         )}
       </div>
 
-      <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+      <MapContainer
+        center={center}
+        zoom={zoom}
+        zoomSnap={0.25}
+        zoomDelta={0.25}
+        style={{ height: '100%', width: '100%' }}
+      >
         <CaptureLeafletView />
         <CaptureMapInteraction onInteract={() => setLastInteraction(Date.now())} />
         <CaptureMapRef onReady={(map) => (mapRef.current = map)} />
