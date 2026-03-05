@@ -91,5 +91,20 @@ export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions
     defaultValue: false,
   });
 
+  builder.addSelect({
+    path: 'transportLineAnimation',
+    name: 'Animacao das linhas',
+    description: 'Escolha como as linhas de transporte devem se comportar no mapa',
+    category: ['Configuracao de Mapa'],
+    settings: {
+      options: [
+        { label: 'Fluxo direcional', value: 'flow' },
+        { label: 'Pulso continuo', value: 'pulse' },
+        { label: 'Linha estatica', value: 'static' },
+      ],
+    },
+    defaultValue: 'flow',
+  });
+
   return builder;
 });

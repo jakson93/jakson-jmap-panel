@@ -121,6 +121,11 @@ export type Pop = {
   lat: number;
   lng: number;
   iconUrl?: string;
+  iconSizePx?: number;
+  iconScaleMode?: 'fixed' | 'map';
+  coverageRadiusMeters?: number;
+  coverageColor?: string;
+  coverageOpacity?: number;
   equipments: PopEquipment[];
 };
 
@@ -129,6 +134,7 @@ export interface PanelOptions {
   centerLng: number;
   zoom: number;
   mapProvider: MapProvider;
+  transportLineAnimation?: 'flow' | 'pulse' | 'static';
   routes: Route[];
   captureNow?: boolean;
   pops: Pop[];

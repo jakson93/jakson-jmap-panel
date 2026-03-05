@@ -20,6 +20,11 @@ const createEmptyPop = (lat: number, lng: number): Pop => ({
   lat,
   lng,
   iconUrl: '',
+  iconSizePx: 32,
+  iconScaleMode: 'map',
+  coverageRadiusMeters: 0,
+  coverageColor: '#2563eb',
+  coverageOpacity: 0.2,
   equipments: [],
 });
 
@@ -288,7 +293,12 @@ export class PopsEditor extends React.PureComponent<Props, State> {
           <Stack key={pop.id} direction="row" gap={2} alignItems="center" justifyContent="space-between">
             <Stack direction="column" gap={0}>
               <div style={{ fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
-              <div style={{ fontSize: 12 }}>{pop.equipments.length} equipamento(s)</div>
+              <div style={{ fontSize: 12 }}>
+                {pop.equipments.length} equipamento(s)
+                {(pop.coverageRadiusMeters ?? 0) > 0 ? ` • raio ${pop.coverageRadiusMeters} m` : ''}
+                {(pop.iconSizePx ?? 32) !== 32 ? ` • icone ${pop.iconSizePx ?? 32}px` : ''}
+                {pop.iconScaleMode === 'fixed' ? ' • fixo' : ' • dinamico'}
+              </div>
             </Stack>
             <Stack direction="row" gap={1}>
               <Button size="sm" onClick={() => this.openEditPop(idx)}>
@@ -390,6 +400,47 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                   </div>
                 </Stack>
               </div>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 12 }}>Raio de atendimento</div>
+                <Stack direction="row" gap={2} alignItems="flex-end">
+                  <Field label="Raio (metros)">
+                    <Input
+                      type="number"
+                      min={0}
+                      step={10}
+                      value={draftPop.coverageRadiusMeters ?? 0}
+                      onChange={(e) =>
+                        this.updateDraft({ coverageRadiusMeters: Math.max(0, Number(e.currentTarget.value) || 0) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Cor">
+                    <Input
+                      type="color"
+                      value={draftPop.coverageColor ?? '#2563eb'}
+                      onChange={(e) => this.updateDraft({ coverageColor: e.currentTarget.value })}
+                    />
+                  </Field>
+                  <Field label="Opacidade">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={draftPop.coverageOpacity ?? 0.2}
+                      onChange={(e) => {
+                        const next = Number(e.currentTarget.value);
+                        this.updateDraft({
+                          coverageOpacity: Math.min(1, Math.max(0, Number.isFinite(next) ? next : 0)),
+                        });
+                      }}
+                    />
+                  </Field>
+                </Stack>
+                <div style={{ fontSize: 12 }}>
+                  Defina `0` para nao exibir o raio. Cor e opacidade controlam a area desenhada no mapa.
+                </div>
+              </div>
               <Field
                 label="URL do icone"
                 description="Opcional. Informe a URL de uma imagem para usar como icone do POP"
@@ -398,6 +449,58 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                   value={draftPop.iconUrl ?? ''}
                   placeholder="https://exemplo.com/icone.png"
                   onChange={(e) => this.updateDraft({ iconUrl: e.currentTarget.value })}
+                />
+              </Field>
+              <Field
+                label="Tamanho do icone (px)"
+                description="Define o tamanho base do icone"
+              >
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <input
+                    type="range"
+                    min={16}
+                    max={128}
+                    step={1}
+                    value={draftPop.iconSizePx ?? 32}
+                    onChange={(e) =>
+                      this.updateDraft({
+                        iconSizePx: Math.min(128, Math.max(16, Number(e.currentTarget.value) || 32)),
+                      })
+                    }
+                    style={{ width: '100%' }}
+                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: 12,
+                    }}
+                  >
+                    <span>16px</span>
+                    <span style={{ fontWeight: 600 }}>{draftPop.iconSizePx ?? 32}px</span>
+                    <span>128px</span>
+                  </div>
+                </div>
+              </Field>
+              <Field
+                label="Modo de escala do icone"
+                description="Escolha se o icone fica fixo na tela ou acompanha o zoom do mapa"
+              >
+                <Select
+                  options={[
+                    { label: 'Acompanhar mapa', value: 'map' },
+                    { label: 'Fixo na tela', value: 'fixed' },
+                  ]}
+                  value={
+                    {
+                      label: draftPop.iconScaleMode === 'fixed' ? 'Fixo na tela' : 'Acompanhar mapa',
+                      value: draftPop.iconScaleMode === 'fixed' ? 'fixed' : 'map',
+                    } as SelectableValue<string>
+                  }
+                  onChange={(option) =>
+                    this.updateDraft({ iconScaleMode: (option?.value as Pop['iconScaleMode']) ?? 'map' })
+                  }
                 />
               </Field>
               <div>

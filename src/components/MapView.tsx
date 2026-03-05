@@ -2,7 +2,7 @@ import React from 'react';
 import L from 'leaflet';
 import { DataFrame, Field, FieldType, PanelData, TimeZone, getDisplayProcessor } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { PanelOptions } from '../types';
@@ -258,21 +258,85 @@ const buildItemSeriesWithTimeMap = (series: DataFrame[]) => {
   return values;
 };
 
-const average = (values: number[]) => {
-  if (values.length === 0) {
-    return null;
+const addItemKey = (set: Set<string>, item?: string) => {
+  const key = item?.trim();
+  if (key) {
+    set.add(key);
   }
-  return values.reduce((acc, value) => acc + value, 0) / values.length;
 };
 
-const range = (values: number[]) => {
-  if (values.length === 0) {
-    return null;
-  }
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  return { min, max, spread: max - min };
+const collectMapItemKeys = (routes: PanelOptions['routes']) => {
+  const keys = new Set<string>();
+  routes.forEach((route) => {
+    addItemKey(keys, route.interfaceItem);
+    addItemKey(keys, route.capacityItem);
+    route.metrics.forEach((metric) => {
+      if (metric.id === 'download' || metric.id === 'upload' || metric.id === 'rx' || metric.id === 'tx') {
+        addItemKey(keys, metric.zabbixItem);
+      }
+    });
+    route.trunks.forEach((trunk) => {
+      trunk.interfaces.forEach((iface) => {
+        addItemKey(keys, iface.rxItem);
+        addItemKey(keys, iface.txItem);
+      });
+    });
+  });
+  return keys;
 };
+
+const collectDetailItemKeys = (
+  selectedRoute: PanelOptions['routes'][number] | null,
+  selectedPop: PanelOptions['pops'][number] | null
+) => {
+  const keys = new Set<string>();
+  if (selectedRoute) {
+    selectedRoute.metrics.forEach((metric) => addItemKey(keys, metric.zabbixItem));
+    selectedRoute.extraMetrics.forEach((metric) => addItemKey(keys, metric.item));
+    selectedRoute.trunks.forEach((trunk) => {
+      trunk.interfaces.forEach((iface) => {
+        addItemKey(keys, iface.txItem);
+        addItemKey(keys, iface.rxItem);
+        iface.metrics.forEach((metric) => addItemKey(keys, metric.item));
+      });
+    });
+  }
+  if (selectedPop) {
+    selectedPop.equipments.forEach((equipment) => {
+      addItemKey(keys, equipment.statusItem);
+      addItemKey(keys, equipment.cpuItem);
+      addItemKey(keys, equipment.memoryItem);
+      addItemKey(keys, equipment.temperatureItem);
+      addItemKey(keys, equipment.uptimeItem);
+      equipment.metrics.forEach((metric) => addItemKey(keys, metric.item));
+    });
+  }
+  return keys;
+};
+
+const frameMatchesItems = (frame: DataFrame, itemKeys: Set<string>) => {
+  if (itemKeys.size === 0) {
+    return false;
+  }
+  const frameName = frame.name?.trim();
+  if (frameName && itemKeys.has(frameName)) {
+    return true;
+  }
+  return frame.fields.some((field) => {
+    const name = field.name?.trim();
+    const dsName = field.config?.displayNameFromDS?.trim();
+    const displayName = field.config?.displayName?.trim();
+    return (
+      (name ? itemKeys.has(name) : false) ||
+      (dsName ? itemKeys.has(dsName) : false) ||
+      (displayName ? itemKeys.has(displayName) : false)
+    );
+  });
+};
+
+const filterSeriesByItems = (series: DataFrame[], itemKeys: Set<string>) =>
+  series.filter((frame) => frameMatchesItems(frame, itemKeys));
+
 
 const normalizeValue = (value: unknown) => String(value ?? '').trim().toLowerCase();
 
@@ -309,52 +373,6 @@ const countFlaps = (series: { values: number[]; times: number[] }, windowMs: num
     }
   }
   return count;
-};
-
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-
-const getPointAlongRoute = (points: Array<{ lat: number; lng: number }>, fraction: number) => {
-  if (points.length === 0) {
-    return null;
-  }
-  if (points.length === 1) {
-    return points[0];
-  }
-  const clamped = clamp01(fraction);
-  if (clamped === 0) {
-    return points[0];
-  }
-  if (clamped === 1) {
-    return points[points.length - 1];
-  }
-  const total = distanceKm(points);
-  if (total === 0) {
-    return points[0];
-  }
-  const target = total * clamped;
-  let acc = 0;
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
-    const dLat = toRad(b.lat - a.lat);
-    const dLng = toRad(b.lng - a.lng);
-    const lat1 = toRad(a.lat);
-    const lat2 = toRad(b.lat);
-    const hav =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
-    const c = 2 * Math.atan2(Math.sqrt(hav), Math.sqrt(1 - hav));
-    const seg = 6371 * c;
-    if (acc + seg >= target) {
-      const ratio = seg === 0 ? 0 : (target - acc) / seg;
-      return {
-        lat: a.lat + (b.lat - a.lat) * ratio,
-        lng: a.lng + (b.lng - a.lng) * ratio,
-      };
-    }
-    acc += seg;
-  }
-  return points[points.length - 1];
 };
 
 type SparklineProps = {
@@ -562,6 +580,7 @@ const DualHistoryChart = ({
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = React.useState<number>(0);
+  const clipId = React.useMemo(() => `dual-chart-clip-${Math.random().toString(36).slice(2, 8)}`, []);
   const base = primary?.values?.length ? primary : secondary;
   const renderWidth = width ?? (containerWidth > 0 ? containerWidth : 520);
 
@@ -646,8 +665,6 @@ const DualHistoryChart = ({
   const primaryValue = hover !== null && primary?.values ? primary.values[Math.min(hover, primary.values.length - 1)] : null;
   const secondaryValue =
     hover !== null && secondary?.values ? secondary.values[Math.min(hover, secondary.values.length - 1)] : null;
-
-  const clipId = React.useMemo(() => `dual-chart-clip-${Math.random().toString(36).slice(2, 8)}`, []);
 
   return (
     <div ref={containerRef} style={{ position: 'relative', width: width ?? '100%', height, overflow: 'hidden' }}>
@@ -759,6 +776,91 @@ function CaptureMapInteraction({ onInteract }: { onInteract: () => void }) {
   return null;
 }
 
+function EnableMiddleMousePan() {
+  const map = useMap();
+
+  React.useEffect(() => {
+    const container = map.getContainer();
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    const stopDrag = () => {
+      dragging = false;
+      container.style.cursor = '';
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button !== 1) {
+        return;
+      }
+
+      dragging = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      container.style.cursor = 'grabbing';
+      document.body.style.cursor = 'grabbing';
+      document.body.style.userSelect = 'none';
+      event.preventDefault();
+    };
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (!dragging) {
+        return;
+      }
+
+      const deltaX = event.clientX - lastX;
+      const deltaY = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+
+      if (deltaX !== 0 || deltaY !== 0) {
+        map.panBy([deltaX, deltaY], { animate: false });
+      }
+
+      event.preventDefault();
+    };
+
+    const onMouseUp = (event: MouseEvent) => {
+      if (event.button === 1 && dragging) {
+        stopDrag();
+        event.preventDefault();
+      }
+    };
+
+    const onBlur = () => {
+      if (dragging) {
+        stopDrag();
+      }
+    };
+
+    const preventAuxClick = (event: MouseEvent) => {
+      if (event.button === 1) {
+        event.preventDefault();
+      }
+    };
+
+    container.addEventListener('mousedown', onMouseDown);
+    container.addEventListener('auxclick', preventAuxClick);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', onBlur);
+
+    return () => {
+      stopDrag();
+      container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('auxclick', preventAuxClick);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [map]);
+
+  return null;
+}
+
 function EnsureHitboxPane({ onReady }: { onReady: () => void }) {
   const map = useMap();
   React.useEffect(() => {
@@ -780,11 +882,25 @@ function CaptureMapRef({ onReady }: { onReady: (map: L.Map) => void }) {
   return null;
 }
 
+function CaptureMapZoom({ onZoom }: { onZoom: (zoom: number) => void }) {
+  useMapEvents({
+    zoom: (e) => {
+      onZoom(e.target.getZoom());
+    },
+    zoomend: (e) => {
+      onZoom(e.target.getZoom());
+    },
+  });
+
+  return null;
+}
+
 export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const theme = useTheme2();
   const centerLat = Number.isFinite(options.centerLat) ? options.centerLat : DEFAULT_CENTER_LAT;
   const centerLng = Number.isFinite(options.centerLng) ? options.centerLng : DEFAULT_CENTER_LNG;
   const zoom = Number.isFinite(options.zoom) ? options.zoom : DEFAULT_ZOOM;
+  const transportLineAnimation = options.transportLineAnimation ?? 'flow';
   const center: [number, number] = [centerLat, centerLng];
   const [search, setSearch] = React.useState('');
   const [filterTerm, setFilterTerm] = React.useState('');
@@ -798,12 +914,13 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     name: string;
     series?: { values: number[]; times: number[] };
   } | null>(null);
-  const [badgeScaleOverride, setBadgeScaleOverride] = React.useState(0.01);
+  const [currentZoom, setCurrentZoom] = React.useState(zoom);
   const [dashTick, setDashTick] = React.useState(0);
   const [hitboxReady, setHitboxReady] = React.useState(false);
   const [lastInteraction, setLastInteraction] = React.useState(0);
   const [autoFocusIndex, setAutoFocusIndex] = React.useState(0);
   const [statsCollapsed, setStatsCollapsed] = React.useState(true);
+  const [eventSearch, setEventSearch] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const linkCardRef = React.useRef<HTMLDivElement | null>(null);
   const leftListRef = React.useRef<HTMLDivElement | null>(null);
@@ -811,16 +928,8 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const linkCenterRef = React.useRef<HTMLDivElement | null>(null);
   const [linkLayout, setLinkLayout] = React.useState({ leftX: 0, rightX: 0, top: 0, height: 0, leftListTop: 0 });
   const normalizedSearch = filterTerm.trim().toLowerCase();
-  const itemValueMap = React.useMemo(
-    () => buildItemValueMap(data?.series ?? [], theme, timeZone),
-    [data, theme, timeZone]
-  );
-  const itemFormatterMap = React.useMemo(
-    () => buildItemFormatterMap(data?.series ?? [], theme, timeZone),
-    [data, theme, timeZone]
-  );
-  const itemSeriesMap = React.useMemo(() => buildItemSeriesMap(data?.series ?? []), [data]);
-  const itemSeriesTimeMap = React.useMemo(() => buildItemSeriesWithTimeMap(data?.series ?? []), [data]);
+  const mapZoomScale = Math.pow(2, currentZoom - zoom);
+  const dataSeries = data?.series ?? [];
   const autoFocusPauseMs = 15000;
   const autoFocusIntervalMs = 8000;
   const autoFocusMaxZoom = 12;
@@ -954,14 +1063,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     onOptionsChange({ ...options, captureNow: false });
   }, [onOptionsChange, options]);
 
-
-  const defaultIcon = L.divIcon({
-    className: '',
-    html: '<div style="width:10px;height:10px;border-radius:50%;background:#60a5fa;border:2px solid #1f2937;"></div>',
-    iconSize: [10, 10],
-    iconAnchor: [5, 5],
-  });
-
   const routes = options.routes ?? [];
   const pops = options.pops ?? [];
 
@@ -1000,12 +1101,25 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     mapRef.current.setView([pop.lat, pop.lng], Math.max(zoom, 13));
   };
 
-  const totalKm = routes.reduce((acc, route) => acc + distanceKm(route.points), 0);
-
-  const activeRoutes = routes.filter((route) => route.points.length >= 2).length;
   const selectedRoute = selectedRouteId ? routes.find((route) => route.id === selectedRouteId) ?? null : null;
   const selectedPop = selectedPopId ? pops.find((pop) => pop.id === selectedPopId) ?? null : null;
   const selectedRouteDistance = selectedRoute ? distanceKm(selectedRoute.points) : 0;
+  const routeById = React.useMemo(() => new Map(routes.map((route) => [route.id, route] as const)), [routes]);
+  const activeItemKeys = React.useMemo(() => {
+    const keys = collectMapItemKeys(routes);
+    if (selectedRoute || selectedPop || rxHistory) {
+      collectDetailItemKeys(selectedRoute, selectedPop).forEach((key) => keys.add(key));
+    }
+    return keys;
+  }, [routes, rxHistory, selectedPop, selectedRoute]);
+  const activeSeries = React.useMemo(() => filterSeriesByItems(dataSeries, activeItemKeys), [activeItemKeys, dataSeries]);
+  const itemValueMap = React.useMemo(() => buildItemValueMap(activeSeries, theme, timeZone), [activeSeries, theme, timeZone]);
+  const itemFormatterMap = React.useMemo(
+    () => buildItemFormatterMap(activeSeries, theme, timeZone),
+    [activeSeries, theme, timeZone]
+  );
+  const itemSeriesMap = React.useMemo(() => buildItemSeriesMap(activeSeries), [activeSeries]);
+  const itemSeriesTimeMap = React.useMemo(() => buildItemSeriesWithTimeMap(activeSeries), [activeSeries]);
 
   const getMetricValue = React.useCallback(
     (item?: string) => (item ? itemValueMap.get(item) : undefined),
@@ -1083,160 +1197,93 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
       ? 'Degradado'
       : 'Sem dados';
   const downRoutes = routes.filter((route) => route.points.length > 1 && computeRouteStatus(route) === 'down');
-  const statusCounts = routes.reduce(
-    (acc, route) => {
-      const status = computeRouteStatus(route);
-      acc.total += 1;
+  const normalizedEventSearch = eventSearch.trim().toLowerCase();
+  const routeIncidentItems = React.useMemo(() => {
+    const toPriority = (status: string) => {
+      if (status === 'down') {
+        return 0;
+      }
+      if (status === 'alert') {
+        return 1;
+      }
       if (status === 'online') {
-        acc.online += 1;
-      } else if (status === 'down') {
-        acc.down += 1;
-      } else if (status === 'alert') {
-        acc.alert += 1;
-      } else {
-        acc.unknown += 1;
+        return 2;
       }
-      return acc;
-    },
-    { total: 0, online: 0, alert: 0, down: 0, unknown: 0 }
-  );
-
-  const availabilityStats = React.useMemo(() => {
-    const windows = [
-      { label: '24h', ms: 24 * 60 * 60 * 1000 },
-      { label: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
-      { label: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
-    ];
-
-    const routeSeries = routes
-      .map((route) => {
-        const itemKey = route.interfaceItem ?? '';
-        const series = itemSeriesTimeMap.get(itemKey);
-        const expected = toNumber(route.onlineValue ?? '1');
-        if (!series || expected === null) {
-          return null;
-        }
-        return { route, series, expected };
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-
-    let latestTime = 0;
-    routeSeries.forEach(({ series }) => {
-      const last = series.times[series.times.length - 1];
-      if (last && last > latestTime) {
-        latestTime = last;
-      }
-    });
-
-    const availability = windows.map((window) => {
-      if (!latestTime || routeSeries.length === 0) {
-        return { label: window.label, pct: null, downMinutes: null, samples: 0 };
-      }
-      const windowStart = latestTime - window.ms;
-      let online = 0;
-      let total = 0;
-      let downMs = 0;
-
-      routeSeries.forEach(({ series, expected }) => {
-        const values = series.values;
-        const times = series.times;
-        for (let i = 0; i < values.length; i++) {
-          const time = times[i];
-          if (time < windowStart) {
-            continue;
-          }
-          total += 1;
-          if (values[i] === expected) {
-            online += 1;
-          }
-          if (i < values.length - 1) {
-            const nextTime = times[i + 1];
-            if (values[i] !== expected && nextTime > windowStart) {
-              const start = Math.max(time, windowStart);
-              const end = Math.min(nextTime, latestTime);
-              downMs += Math.max(0, end - start);
-            }
-          }
-        }
-      });
-
-      const pct = total > 0 ? (online / total) * 100 : null;
-      const downMinutes = downMs > 0 ? downMs / 60000 : null;
-      return { label: window.label, pct, downMinutes, samples: total };
-    });
-
-    const recentChanges = routeSeries
-      .map(({ route, series }) => {
-        const values = series.values;
-        const times = series.times;
-        if (values.length < 2) {
-          return null;
-        }
-        const lastValue = values[values.length - 1];
-        for (let i = values.length - 2; i >= 0; i--) {
-          if (values[i] !== lastValue) {
-            const changeTime = times[i + 1];
-            const minutesAgo = latestTime ? (latestTime - changeTime) / 60000 : null;
-            return { name: route.name || 'Sem nome', minutesAgo };
-          }
-        }
-        return null;
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-      .sort((a, b) => (a.minutesAgo ?? Infinity) - (b.minutesAgo ?? Infinity))
-      .slice(0, 3);
-
-    return { availability, recentChanges };
-  }, [routes, itemSeriesTimeMap]);
-
-  const opticalStats = React.useMemo(() => {
-    const txValues: number[] = [];
-    const rxValues: number[] = [];
-    const routeRxStats: Array<{ name: string; min: number; spread: number }> = [];
-
-    routes.forEach((route) => {
-      const perRouteRx: number[] = [];
-      (route.trunks ?? []).forEach((trunk) => {
-        trunk.interfaces.forEach((iface) => {
-          if (iface.txItem) {
-            const series = itemSeriesMap.get(iface.txItem);
-            if (series) {
-              txValues.push(...series);
-            }
-          }
-          if (iface.rxItem) {
-            const series = itemSeriesMap.get(iface.rxItem);
-            if (series) {
-              rxValues.push(...series);
-              perRouteRx.push(...series);
-            }
-          }
-        });
-      });
-      const routeRange = range(perRouteRx);
-      if (routeRange) {
-        routeRxStats.push({
-          name: route.name || 'Sem nome',
-          min: routeRange.min,
-          spread: routeRange.spread,
-        });
-      }
-    });
-
-    const txRange = range(txValues);
-    const rxRange = range(rxValues);
-    const txAvg = average(txValues);
-    const rxAvg = average(rxValues);
-    const worstRx = [...routeRxStats].sort((a, b) => a.min - b.min).slice(0, 3);
-    const worstOsc = [...routeRxStats].sort((a, b) => b.spread - a.spread).slice(0, 3);
-
-    return {
-      tx: { min: txRange?.min ?? null, max: txRange?.max ?? null, avg: txAvg },
-      rx: { min: rxRange?.min ?? null, max: rxRange?.max ?? null, avg: rxAvg },
-      worstRx,
-      worstOsc,
+      return 3;
     };
-  }, [routes, itemSeriesMap]);
+
+    return routes
+      .map((route) => {
+        const status = computeRouteStatus(route);
+        const statusColor =
+          status === 'online'
+            ? route.colors.online
+            : status === 'down'
+            ? route.colors.down
+            : status === 'alert'
+            ? route.colors.alert
+            : theme.colors.text.secondary;
+        const statusLabel =
+          status === 'online' ? 'Online' : status === 'down' ? 'Critico' : status === 'alert' ? 'Degradado' : 'Sem dados';
+
+        return {
+          id: route.id,
+          name: route.name || 'Sem nome',
+          status,
+          statusLabel,
+          statusColor,
+          priority: toPriority(status),
+        };
+      })
+      .sort((a, b) => {
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+        return a.name.localeCompare(b.name, 'pt-BR');
+      });
+  }, [computeRouteStatus, routes, theme.colors.text.secondary]);
+
+  const visibleRouteIncidents = React.useMemo(() => {
+    if (!normalizedEventSearch) {
+      return routeIncidentItems;
+    }
+
+    return routeIncidentItems.filter((item) => {
+      const routeName = item.name.toLowerCase();
+      const statusLabel = item.statusLabel.toLowerCase();
+      return routeName.includes(normalizedEventSearch) || statusLabel.includes(normalizedEventSearch);
+    });
+  }, [normalizedEventSearch, routeIncidentItems]);
+
+  const topRxSignals = React.useMemo(() => {
+    return routes
+      .flatMap((route) => {
+        return (route.trunks ?? []).flatMap((trunk) =>
+          (trunk.interfaces ?? []).map((iface) => {
+            const rxItem = iface.rxItem?.trim();
+            const rxNumeric = rxItem ? getNumericValue(rxItem) : null;
+            const rxDisplay = rxItem ? getMetricValue(rxItem) : undefined;
+
+            return {
+              id: `${route.id}:${trunk.id}:${iface.id}`,
+              routeId: route.id,
+              routeName: route.name || 'Sem nome',
+              trunkName: trunk.name || 'Trunk',
+              interfaceName: iface.name || 'Interface',
+              rxNumeric,
+              rxText: rxDisplay?.text ?? '--',
+            };
+          })
+        );
+      })
+      .filter((item) => item.rxNumeric !== null)
+      .sort((a, b) => (a.rxNumeric ?? Number.POSITIVE_INFINITY) - (b.rxNumeric ?? Number.POSITIVE_INFINITY))
+      .slice(0, 3);
+  }, [
+    getMetricValue,
+    getNumericValue,
+    routes,
+  ]);
 
   React.useEffect(() => {
     const interval = setInterval(() => {
@@ -1290,13 +1337,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     lastInteraction,
     selectedRouteId,
   ]);
-
-  const formatNumber = (value: number | null, digits = 2) => {
-    if (value === null || value === undefined || Number.isNaN(value)) {
-      return '--';
-    }
-    return value.toFixed(digits);
-  };
 
   const formatMinutes = (value: number | null) => {
     if (value === null || value === undefined || Number.isNaN(value)) {
@@ -1383,7 +1423,8 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   };
 
   return (
-    <div ref={containerRef} style={{ height: '100%', width: '100%', position: 'relative' }}>
+    <div ref={containerRef} style={{ height: '100%', width: '100%', display: 'flex' }}>
+      <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
       <style>
         {`
           .jmap-popup .leaflet-popup-content-wrapper,
@@ -1408,17 +1449,28 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           }
           .jmap-route--online {
             stroke-dasharray: 14 10;
-            animation: jmap-flow 1.2s linear infinite;
             filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.35));
           }
           .jmap-route--alert {
             stroke-dasharray: 8 10;
-            animation: jmap-flow 1.8s linear infinite;
             filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.45));
+          }
+          .jmap-route--mode-flow {
+            animation: jmap-flow 1.4s linear infinite;
+          }
+          .jmap-route--mode-pulse {
+            stroke-dasharray: none;
+            animation: jmap-line-beacon 1.35s ease-in-out infinite;
+          }
+          .jmap-route--down.jmap-route--mode-pulse {
+            animation: jmap-line-beacon-critical 0.85s ease-in-out infinite;
+          }
+          .jmap-route--mode-static {
+            stroke-dasharray: none;
           }
           .jmap-route--down {
             stroke-dasharray: 6 8;
-            animation: jmap-flow 0.9s linear infinite, jmap-pulse 1.4s ease-in-out infinite;
+            animation: jmap-pulse 1.4s ease-in-out infinite;
             filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.55));
           }
           @keyframes jmap-flow {
@@ -1429,9 +1481,13 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
             0%, 100% { stroke-opacity: 0.35; stroke-width: 4; }
             50% { stroke-opacity: 1; stroke-width: 6; }
           }
-          .jmap-transport-badge {
-            animation: jmap-badge-pulse 1.6s ease-in-out infinite;
-            pointer-events: none;
+          @keyframes jmap-line-beacon {
+            0%, 100% { stroke-opacity: 0.08; stroke-width: 3.5; }
+            50% { stroke-opacity: 1; stroke-width: 6.5; }
+          }
+          @keyframes jmap-line-beacon-critical {
+            0%, 100% { stroke-opacity: 0.05; stroke-width: 3.5; }
+            50% { stroke-opacity: 1; stroke-width: 8; }
           }
           .jmap-tooltip {
             pointer-events: none;
@@ -1466,9 +1522,13 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
             0% { stroke-dashoffset: 0; }
             100% { stroke-dashoffset: -28; }
           }
-          @keyframes jmap-badge-pulse {
-            0%, 100% { box-shadow: 0 10px 22px rgba(0,0,0,0.28); }
-            50% { box-shadow: 0 14px 26px rgba(16, 185, 129, 0.25); }
+          @keyframes jmap-incident-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.18); opacity: 1; }
+          }
+          @keyframes jmap-incident-soft-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.82; }
+            50% { transform: scale(1.08); opacity: 0.96; }
           }
         `}
       </style>
@@ -1555,36 +1615,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
             ))}
           </div>
         )}
-      </div>
-
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          left: 52,
-          zIndex: 1000,
-          background: 'rgba(17, 24, 39, 0.75)',
-          border: '1px solid rgba(148, 163, 184, 0.3)',
-          borderRadius: 8,
-          padding: '8px 10px',
-          color: '#e2e8f0',
-          fontSize: 12,
-          minWidth: 220,
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>Calibrar escala do badge</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            type="range"
-            min={0.01}
-            max={3}
-            step={0.01}
-            value={badgeScaleOverride}
-            onChange={(e) => setBadgeScaleOverride(Number(e.currentTarget.value))}
-            style={{ flex: 1 }}
-          />
-          <span style={{ minWidth: 48, textAlign: 'right' }}>{badgeScaleOverride.toFixed(2)}x</span>
-        </div>
       </div>
 
       <button
@@ -2374,105 +2404,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
         </div>
       )}
 
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 12,
-          right: 12,
-          zIndex: 1000,
-          background: 'rgba(17, 24, 39, 0.75)',
-          border: '1px solid rgba(148, 163, 184, 0.3)',
-          borderRadius: 8,
-          padding: '10px 12px',
-          color: '#e2e8f0',
-          fontSize: 12,
-          minWidth: 320,
-          maxHeight: statsCollapsed ? 44 : 360,
-          overflowY: statsCollapsed ? 'hidden' : 'auto',
-          transition: 'max-height 0.2s ease',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: statsCollapsed ? 0 : 8 }}>
-          <span style={{ fontWeight: 600, flex: 1 }}>Estatisticas do transporte</span>
-          <button
-            type="button"
-            onClick={() => setStatsCollapsed((prev) => !prev)}
-            style={{
-              background: 'rgba(15, 23, 42, 0.8)',
-              border: '1px solid rgba(148, 163, 184, 0.3)',
-              color: '#e2e8f0',
-              padding: '2px 8px',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontSize: 11,
-              fontWeight: 600,
-            }}
-          >
-            {statsCollapsed ? 'Mostrar' : 'Ocultar'}
-          </button>
-        </div>
-        {!statsCollapsed && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
-          <div>
-            <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>Extensao total</div>
-            <div style={{ fontWeight: 600 }}>{totalKm.toFixed(1)} km</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>Total de rotas</div>
-            <div style={{ fontWeight: 600 }}>{statusCounts.total}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>Rotas ativas</div>
-            <div style={{ fontWeight: 600 }}>{activeRoutes}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>Down</div>
-            <div style={{ fontWeight: 600, color: '#f87171' }}>{statusCounts.down}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>Degradadas</div>
-            <div style={{ fontWeight: 600, color: '#f59e0b' }}>{statusCounts.alert}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>Sem dados</div>
-            <div style={{ fontWeight: 600, color: '#fbbf24' }}>{statusCounts.unknown}</div>
-          </div>
-          </div>
-        )}
-
-        {!statsCollapsed && (
-          <div style={{ borderTop: '1px solid rgba(148, 163, 184, 0.2)', paddingTop: 8, marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}>Eventos recentes</div>
-          {availabilityStats.recentChanges.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>Sem mudancas recentes</div>
-          ) : (
-            availabilityStats.recentChanges.map((entry) => (
-              <div key={entry.name} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span>{entry.name}</span>
-                <span>{entry.minutesAgo !== null ? formatMinutes(entry.minutesAgo) : '--'}</span>
-              </div>
-            ))
-          )}
-          </div>
-        )}
-
-        {!statsCollapsed && (
-          <div style={{ borderTop: '1px solid rgba(148, 163, 184, 0.2)', paddingTop: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}>Top criticos (RX)</div>
-          {opticalStats.worstRx.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>Sem dados RX</div>
-          ) : (
-            opticalStats.worstRx.map((entry) => (
-              <div key={`rx-${entry.name}`} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span>{entry.name}</span>
-                <span>{formatNumber(entry.min)} dBm</span>
-              </div>
-            ))
-          )}
-          </div>
-        )}
-      </div>
-
       <MapContainer
         center={center}
         zoom={zoom}
@@ -2482,7 +2413,14 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
       >
         <CaptureLeafletView />
         <CaptureMapInteraction onInteract={() => setLastInteraction(Date.now())} />
-        <CaptureMapRef onReady={(map) => (mapRef.current = map)} />
+        <CaptureMapRef
+          onReady={(map) => {
+            mapRef.current = map;
+            setCurrentZoom(map.getZoom());
+          }}
+        />
+        <CaptureMapZoom onZoom={setCurrentZoom} />
+        <EnableMiddleMousePan />
         <EnsureHitboxPane onReady={() => setHitboxReady(true)} />
         <TileLayer
           key={options.mapProvider}
@@ -2499,76 +2437,63 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           const status = computeRouteStatus(route);
           const statusColor =
             status === 'online' ? route.colors.online : status === 'down' ? route.colors.down : route.colors.alert;
-          const statusClass =
-            status === 'online' ? 'jmap-route--online' : status === 'down' ? 'jmap-route--down' : 'jmap-route--alert';
-          const dashArray = status === 'online' ? '14 10' : status === 'down' ? '6 8' : '8 10';
+          const statusClass = status === 'online' ? 'jmap-route--online' : status === 'down' ? 'jmap-route--down' : 'jmap-route--alert';
+          const modeClass =
+            status === 'down'
+              ? transportLineAnimation === 'pulse'
+                ? 'jmap-route--mode-pulse'
+                : ''
+              : transportLineAnimation === 'pulse'
+              ? 'jmap-route--mode-pulse'
+              : transportLineAnimation === 'static'
+              ? 'jmap-route--mode-static'
+              : 'jmap-route--mode-flow';
+          const dashArray =
+            transportLineAnimation === 'pulse'
+              ? undefined
+              : transportLineAnimation === 'static' && status !== 'down'
+              ? undefined
+              : status === 'online'
+              ? '14 10'
+              : status === 'down'
+              ? '6 8'
+              : '8 10';
           const speed = status === 'online' ? 2 : status === 'down' ? 3.5 : 1.5;
-          const dashOffset = -(dashTick * speed) % 240;
-          const downloadValue = getRouteMetricValue(route, 'download');
-          const uploadValue = getRouteMetricValue(route, 'upload');
-          const midpoint = getPointAlongRoute(route.points, 0.5);
-          const badgeWidth = 200 * badgeScaleOverride;
-          const badgeHeight = 80 * badgeScaleOverride;
-          const badgePadding = 8 * badgeScaleOverride;
-          const badgeRadius = 16 * badgeScaleOverride;
-          const titleSize = 10 * badgeScaleOverride;
-          const rowSize = 11 * badgeScaleOverride;
-          const pillSize = 10 * badgeScaleOverride;
-          const pillPaddingX = 6 * badgeScaleOverride;
-          const pillPaddingY = 2 * badgeScaleOverride;
+          const dashOffset = transportLineAnimation === 'flow' ? -(dashTick * speed) % 240 : 0;
           return (
             <React.Fragment key={route.id}>
               <Polyline
                 positions={route.points.map((p) => [p.lat, p.lng])}
                 pathOptions={{
                   color: statusColor,
-                  className: `jmap-route ${statusClass}`,
+                  className: `jmap-route ${statusClass} ${modeClass}`.trim(),
                   dashArray,
-                  dashOffset: `${dashOffset}`,
+                  dashOffset: dashOffset ? `${dashOffset}` : undefined,
                   weight: 4,
                 }}
+                eventHandlers={{
+                  click: () => {
+                    setSelectedPopId(null);
+                    setSelectedRouteId(route.id);
+                  },
+                }}
               />
-              {midpoint && (
-                <>
-                  <Marker
-                    position={[midpoint.lat, midpoint.lng]}
-                    icon={L.divIcon({
-                      className: '',
-                      html: `
-                        <div class="jmap-transport-badge" style="width:${badgeWidth}px;height:${badgeHeight}px;padding:${badgePadding}px;border-radius:${badgeRadius}px;background:${theme.colors.background.secondary};border:1px solid ${theme.colors.border.medium};display:flex;flex-direction:column;gap:${4 * badgeScaleOverride}px;align-items:center;box-sizing:border-box;">
-                          <div style="font-size:${titleSize}px;text-transform:uppercase;letter-spacing:.6px;color:${theme.colors.text.secondary};">Download / Upload</div>
-                          <div style="display:flex;gap:${8 * badgeScaleOverride}px;font-size:${rowSize}px;color:${theme.colors.text.primary};">
-                            <span>Download</span>
-                            <span style="font-weight:600">${downloadValue?.text ?? '--'}</span>
-                            <span>Upload</span>
-                            <span style="font-weight:600">${uploadValue?.text ?? '--'}</span>
-                          </div>
-                          <div style="padding:${pillPaddingY}px ${pillPaddingX}px;border-radius:999px;font-size:${pillSize}px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;border:1px solid ${statusColor};color:${statusColor};">
-                          ${status === 'online' ? 'Online' : status === 'down' ? 'Down' : status === 'alert' ? 'Degradado' : 'Sem dados'}
-                        </div>
-                        </div>
-                      `,
-                      iconSize: [badgeWidth, badgeHeight],
-                      iconAnchor: [badgeWidth / 2, badgeHeight / 2],
-                    })}
-                  />
-                  {hitboxReady && (
-                    <CircleMarker
-                      center={[midpoint.lat, midpoint.lng]}
-                      radius={Math.max(26, Math.min(60, badgeWidth / 2))}
-                      pane="hitboxPane"
-                      pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
-                      interactive
-                      bubblingMouseEvents={false}
-                      eventHandlers={{
-                        click: () => {
-                          setSelectedPopId(null);
-                          setSelectedRouteId(route.id);
-                        },
-                      }}
-                    />
-                  )}
-                </>
+              {hitboxReady && (
+                <Polyline
+                  positions={route.points.map((p) => [p.lat, p.lng])}
+                  pane="hitboxPane"
+                  pathOptions={{
+                    color: 'transparent',
+                    opacity: 0,
+                    weight: 18,
+                  }}
+                  eventHandlers={{
+                    click: () => {
+                      setSelectedPopId(null);
+                      setSelectedRouteId(route.id);
+                    },
+                  }}
+                />
               )}
             </React.Fragment>
           );
@@ -2576,27 +2501,64 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
         {filteredPops.map((pop) => {
           const iconUrl = normalizePopIconUrl(pop.iconUrl);
           const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
+          const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
+          const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
+          const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
+          const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
+          const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
+          const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
+          const tooltipOffsetY = -(Math.round(iconSizePx / 2) + Math.max(8, Math.round(iconSizePx * 0.4)));
+          const tooltipFontSize = Math.max(9, Math.min(18, Math.round(11 * Math.sqrt(iconZoomScale))));
+          const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
+          const coverageRadiusMeters = Math.max(0, pop.coverageRadiusMeters ?? 0);
+          const coverageColor = pop.coverageColor || '#2563eb';
+          const coverageOpacity = Math.min(1, Math.max(0, pop.coverageOpacity ?? 0.2));
           const icon = iconUrl
             ? L.divIcon({
                 className: '',
-                html: `<div class="jmap-pop-icon">
-                  <img class="jmap-pop-icon__img" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
+                html: `<div class="jmap-pop-icon" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
+                  <img class="jmap-pop-icon__img" style="width:${iconInnerSizePx}px;height:${iconInnerSizePx}px;" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
                 </div>`,
-                iconSize: [32, 32],
-                iconAnchor: [16, 16],
+                iconSize: [iconSizePx, iconSizePx],
+                iconAnchor: [iconSizePx / 2, iconSizePx / 2],
               })
-            : defaultIcon;
+            : L.divIcon({
+                className: '',
+                html: `<div style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;background:#60a5fa;border:2px solid #1f2937;"></div>`,
+                iconSize: [iconSizePx, iconSizePx],
+                iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+              });
           return (
             <React.Fragment key={pop.id}>
+              {coverageRadiusMeters > 0 && (
+                <Circle
+                  center={[pop.lat, pop.lng]}
+                  radius={coverageRadiusMeters}
+                  pathOptions={{
+                    color: coverageColor,
+                    weight: 1,
+                    opacity: Math.min(1, coverageOpacity + 0.25),
+                    fillColor: coverageColor,
+                    fillOpacity: coverageOpacity,
+                  }}
+                  interactive={false}
+                />
+              )}
               <Marker position={[pop.lat, pop.lng]} icon={icon}>
-                <Tooltip className="jmap-tooltip" direction="top" permanent offset={[0, -30]} interactive={false}>
-                  <div style={{ fontSize: 11, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
+                <Tooltip
+                  className="jmap-tooltip"
+                  direction="top"
+                  permanent
+                  offset={[0, tooltipOffsetY]}
+                  interactive={false}
+                >
+                  <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
                 </Tooltip>
               </Marker>
               {hitboxReady && (
                 <CircleMarker
                   center={[pop.lat, pop.lng]}
-                  radius={22}
+                  radius={hitboxRadius}
                   pane="hitboxPane"
                   pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
                   interactive
@@ -2613,6 +2575,258 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           );
         })}
       </MapContainer>
+      <button
+        type="button"
+        onClick={() => setStatsCollapsed((prev) => !prev)}
+        aria-label={statsCollapsed ? 'Abrir painel de incidentes' : 'Fechar painel de incidentes'}
+        style={{
+          position: 'absolute',
+          right: theme.spacing(1),
+          top: '50%',
+          transform: 'translateY(-50%)',
+          background: theme.colors.background.secondary,
+          border: `1px solid ${theme.colors.border.weak}`,
+          color: theme.colors.text.primary,
+          padding: theme.spacing(0.5),
+          borderRadius: 999,
+          cursor: 'pointer',
+          fontSize: 12,
+          fontWeight: 600,
+          zIndex: 600,
+        }}
+      >
+        {statsCollapsed ? '>' : '<'}
+      </button>
+      </div>
+
+      <div
+        style={{
+          width: statsCollapsed ? 0 : 320,
+          transition: 'width 0.2s ease',
+          background: theme.colors.background.secondary,
+          borderLeft: statsCollapsed ? 'none' : `1px solid ${theme.colors.border.weak}`,
+          color: theme.colors.text.primary,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {!statsCollapsed && (
+          <div
+            style={{
+              padding: theme.spacing(1.5),
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.spacing(1),
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 600 }}>Estatisticas do Transporte</div>
+            <input
+              type="text"
+              value={eventSearch}
+              onChange={(e) => setEventSearch(e.currentTarget.value)}
+              placeholder="Buscar rota ou status"
+              style={{
+                background: theme.colors.background.primary,
+                border: `1px solid ${theme.colors.border.weak}`,
+                color: theme.colors.text.primary,
+                padding: theme.spacing(1),
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing(0.75) }}>
+              <div style={{ fontSize: 11, fontWeight: 600 }}>Top 3 piores sinais RX</div>
+              {topRxSignals.length === 0 ? (
+                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Nenhum item RX encontrado.</div>
+              ) : (
+                topRxSignals.map((item) => (
+                  <button
+                    key={`rx-${item.id}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedPopId(null);
+                      setSelectedRouteId(item.routeId);
+                      focusRoute(item.routeId);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: theme.spacing(1),
+                      padding: theme.spacing(0.75),
+                      borderRadius: 8,
+                      border: `1px solid ${theme.colors.border.weak}`,
+                      background: theme.colors.background.primary,
+                      color: theme.colors.text.primary,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background: '#f59e0b',
+                        boxShadow: '0 0 0 4px rgba(245, 158, 11, 0.18)',
+                        animation: 'jmap-incident-soft-pulse 2.2s ease-in-out infinite',
+                        flex: '0 0 auto',
+                      }}
+                    />
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: 'grid',
+                        gap: 2,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {item.routeName}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: theme.colors.text.secondary,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {item.trunkName} • {item.interfaceName}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>{item.rxText}</span>
+                  </button>
+                ))
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing(1) }}>
+              <div style={{ fontSize: 11, fontWeight: 600 }}>Todas as rotas</div>
+              {visibleRouteIncidents.length === 0 && (
+                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Nenhuma rota encontrada.</div>
+              )}
+              {visibleRouteIncidents.map((item) => {
+                const route = routeById.get(item.id);
+                const downloadText = route ? getRouteMetricValue(route, 'download')?.text ?? '--' : '--';
+                const uploadText = route ? getRouteMetricValue(route, 'upload')?.text ?? '--' : '--';
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedPopId(null);
+                      setSelectedRouteId(item.id);
+                      focusRoute(item.id);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: theme.spacing(1),
+                      padding: theme.spacing(1),
+                      borderRadius: 10,
+                      border: `1px solid ${theme.colors.border.weak}`,
+                      background: theme.colors.background.primary,
+                      color: theme.colors.text.primary,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background: item.statusColor,
+                        boxShadow: `0 0 0 4px ${item.statusColor}22`,
+                        animation: 'jmap-incident-pulse 1.2s ease-in-out infinite',
+                        flex: '0 0 auto',
+                      }}
+                    />
+                    <div style={{ display: 'grid', gap: 4, minWidth: 0, flex: 1 }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: theme.spacing(1),
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 600,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            minWidth: 0,
+                            flex: 1,
+                          }}
+                        >
+                          {item.name}
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: item.statusColor,
+                            textTransform: 'uppercase',
+                            letterSpacing: 0.3,
+                            flex: '0 0 auto',
+                          }}
+                        >
+                          {item.statusLabel}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr',
+                          gap: theme.spacing(0.75),
+                          fontSize: 10,
+                          color: theme.colors.text.secondary,
+                        }}
+                      >
+                        <div
+                          style={{
+                            padding: '4px 6px',
+                            borderRadius: 6,
+                            background: theme.colors.background.secondary,
+                            border: `1px solid ${theme.colors.border.weak}`,
+                          }}
+                        >
+                          <span style={{ display: 'block', marginBottom: 2 }}>Download</span>
+                          <span style={{ color: theme.colors.text.primary, fontWeight: 600 }}>{downloadText}</span>
+                        </div>
+                        <div
+                          style={{
+                            padding: '4px 6px',
+                            borderRadius: 6,
+                            background: theme.colors.background.secondary,
+                            border: `1px solid ${theme.colors.border.weak}`,
+                          }}
+                        >
+                          <span style={{ display: 'block', marginBottom: 2 }}>Upload</span>
+                          <span style={{ color: theme.colors.text.primary, fontWeight: 600 }}>{uploadText}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
