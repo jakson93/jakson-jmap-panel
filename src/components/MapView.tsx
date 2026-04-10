@@ -2,7 +2,17 @@ import React from 'react';
 import L from 'leaflet';
 import { DataFrame, Field, FieldType, PanelData, TimeZone, getDisplayProcessor } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-import { Circle, CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import {
+  Circle,
+  CircleMarker,
+  MapContainer,
+  Marker,
+  Polyline,
+  TileLayer,
+  Tooltip,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { PanelOptions } from '../types';
@@ -57,8 +67,6 @@ type ItemValue = {
   raw: unknown;
 };
 
-type ItemFormatter = (value: number) => string;
-
 type SeriesWithTime = {
   values: number[];
   times: number[];
@@ -101,40 +109,6 @@ const buildItemValueMap = (series: DataFrame[], theme: ReturnType<typeof useThem
   });
 
   return values;
-};
-
-const buildItemFormatterMap = (series: DataFrame[], theme: ReturnType<typeof useTheme2>, timeZone?: TimeZone) => {
-  const formatters = new Map<string, ItemFormatter>();
-
-  const addFormatter = (label?: string, formatter?: ItemFormatter) => {
-    const key = label?.trim();
-    if (!key || !formatter || formatters.has(key)) {
-      return;
-    }
-    formatters.set(key, formatter);
-  };
-
-  series.forEach((frame) => {
-    if (!frame.fields?.length) {
-      return;
-    }
-    const valueField =
-      frame.fields.find((field) => field.type === FieldType.number) ??
-      frame.fields.find((field) => field.type !== FieldType.time);
-    if (!valueField) {
-      return;
-    }
-
-    const processor = getDisplayProcessor({ field: valueField, theme, timeZone });
-    const formatter: ItemFormatter = (value: number) => processor(value).text ?? String(value);
-
-    addFormatter(frame.name, formatter);
-    addFormatter(valueField.name, formatter);
-    addFormatter(valueField.config?.displayNameFromDS, formatter);
-    addFormatter(valueField.config?.displayName, formatter);
-  });
-
-  return formatters;
 };
 
 const toNumber = (value: unknown): number | null => {
@@ -269,7 +243,6 @@ const collectMapItemKeys = (routes: PanelOptions['routes']) => {
   const keys = new Set<string>();
   routes.forEach((route) => {
     addItemKey(keys, route.interfaceItem);
-    addItemKey(keys, route.capacityItem);
     route.metrics.forEach((metric) => {
       if (metric.id === 'download' || metric.id === 'upload' || metric.id === 'rx' || metric.id === 'tx') {
         addItemKey(keys, metric.zabbixItem);
@@ -337,8 +310,10 @@ const frameMatchesItems = (frame: DataFrame, itemKeys: Set<string>) => {
 const filterSeriesByItems = (series: DataFrame[], itemKeys: Set<string>) =>
   series.filter((frame) => frameMatchesItems(frame, itemKeys));
 
-
-const normalizeValue = (value: unknown) => String(value ?? '').trim().toLowerCase();
+const normalizeValue = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase();
 
 const resolveRouteStatus = (interfaceItem?: string, onlineValue?: string, itemValueMap?: Map<string, ItemValue>) => {
   if (!interfaceItem || !itemValueMap) {
@@ -412,76 +387,95 @@ type HistoryWindow = {
   avg: number | null;
 };
 
-type HistoryLineChartProps = {
+type SignalTrendChartProps = {
   series?: { values: number[]; times: number[] };
   width: number;
   height: number;
   color: string;
 };
 
-const HistoryLineChart = ({ series, width, height, color }: HistoryLineChartProps) => {
+const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProps) => {
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
 
-  if (!series || series.values.length < 2) {
-    return <div style={{ fontSize: 12 }}>--</div>;
-  }
+  const getSeriesTimeUnit = (latestTime: number) => (latestTime < 1_000_000_000_000 ? 's' : 'ms');
 
-  const smoothWindow = 50;
-  const smoothValues = series.values.map((_, idx) => {
-    const start = Math.max(0, idx - smoothWindow + 1);
-    const slice = series.values.slice(start, idx + 1);
-    const sum = slice.reduce((acc, v) => acc + v, 0);
-    return sum / slice.length;
-  });
+  const computeTrend = (seriesData?: {
+    values: number[];
+    times: number[];
+  }): { current: number | null; days15: number | null; days30: number | null } => {
+    if (!seriesData || seriesData.values.length === 0) {
+      return { current: null, days15: null, days30: null };
+    }
+    const latestTime = seriesData.times[seriesData.times.length - 1];
+    const current = seriesData.values[seriesData.values.length - 1];
+    const unitMultiplier = getSeriesTimeUnit(latestTime) === 's' ? 1 : 1000;
 
-  const values = smoothValues;
-  const times = series.times;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const tickStep = 2;
-  const tickMin = Math.floor(min / tickStep) * tickStep;
-  const tickMax = Math.ceil(max / tickStep) * tickStep;
-  const range = tickMax - tickMin || tickStep;
+    const computeAvg = (days: number) => {
+      const windowStart = latestTime - days * 24 * 60 * 60 * unitMultiplier;
+      const values: number[] = [];
+      for (let i = 0; i < seriesData.values.length; i++) {
+        if (seriesData.times[i] >= windowStart) {
+          values.push(seriesData.values[i]);
+        }
+      }
+      if (values.length === 0) return null;
+      return values.reduce((acc, v) => acc + v, 0) / values.length;
+    };
 
-  const marginLeft = 66;
-  const marginBottom = 18;
-  const plotWidth = Math.max(1, width - marginLeft - 6);
-  const plotHeight = Math.max(1, height - marginBottom - 6);
-  const tickCount = 5;
-
-  const points = values
-    .map((value, index) => {
-      const x = marginLeft + (index / (values.length - 1)) * plotWidth;
-      const y = 4 + plotHeight - ((value - tickMin) / range) * plotHeight;
-      return { x, y };
-    })
-    .map((p) => `${p.x},${p.y}`)
-    .join(' ');
-
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const rawX = e.clientX - rect.left - marginLeft;
-    const clampedX = Math.max(0, Math.min(plotWidth, rawX));
-    const idx = Math.round((clampedX / plotWidth) * (values.length - 1));
-    const clamped = Math.max(0, Math.min(values.length - 1, idx));
-    setHoverIndex(clamped);
+    return {
+      current,
+      days15: computeAvg(15),
+      days30: computeAvg(30),
+    };
   };
 
-  const hover = hoverIndex !== null ? hoverIndex : null;
-  const hoverPoint =
-    hover !== null
-      ? {
-          x: marginLeft + (hover / (values.length - 1)) * plotWidth,
-          y: 4 + plotHeight - ((values[hover] - tickMin) / range) * plotHeight,
-        }
-      : null;
+  const trend = computeTrend(series);
 
-  const tooltip =
-    hover !== null
-      ? {
-          value: values[hover].toFixed(2),
-          time: new Date(times[hover]).toLocaleString(),
-        }
+  const marginLeft = 50;
+  const marginBottom = 24;
+  const marginTop = 20;
+  const plotWidth = Math.max(1, width - marginLeft - 6);
+  const plotHeight = Math.max(1, height - marginBottom - marginTop);
+
+  const values: (number | null)[] = [trend.days30, trend.days15, trend.current];
+  const labels = ['30 dias', '15 dias', 'Atual'];
+  const validValues = values.filter((v): v is number => v !== null);
+
+  if (validValues.length === 0) {
+    return <div style={{ fontSize: 12 }}>Sem dados</div>;
+  }
+
+  const min = Math.min(...validValues);
+  const max = Math.max(...validValues);
+  const range = max - min || 1;
+
+  const getY = (value: number) => marginTop + plotHeight - ((value - min) / range) * plotHeight;
+  const getX = (idx: number) => marginLeft + (idx / (values.length - 1)) * plotWidth;
+
+  const points = values
+    .map((v, i) => (v !== null ? { x: getX(i), y: getY(v), idx: i } : null))
+    .filter((p): p is { x: number; y: number; idx: number } => p !== null);
+
+  const linePath = points.length >= 2 ? points.map((p) => `${p.x},${p.y}`).join(' ') : '';
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    let closestIdx = 0;
+    let closestDist = Infinity;
+    for (let i = 0; i < values.length; i++) {
+      const dist = Math.abs(getX(i) - x);
+      if (dist < closestDist && values[i] !== null) {
+        closestDist = dist;
+        closestIdx = i;
+      }
+    }
+    setHoverIndex(closestIdx);
+  };
+
+  const hoveredPoint =
+    hoverIndex !== null && values[hoverIndex] !== null
+      ? { value: values[hoverIndex]!, idx: hoverIndex, x: getX(hoverIndex), y: getY(values[hoverIndex]!) }
       : null;
 
   return (
@@ -491,262 +485,92 @@ const HistoryLineChart = ({ series, width, height, color }: HistoryLineChartProp
         height={height}
         viewBox={`0 0 ${width} ${height}`}
         style={{ display: 'block' }}
-        onMouseMove={onMove}
+        onMouseMove={handleMouseMove}
         onMouseLeave={() => setHoverIndex(null)}
       >
-        {Array.from({ length: tickCount + 1 }).map((_, i) => {
-          const y = 4 + (plotHeight / tickCount) * i;
-          const value = tickMax - (range / tickCount) * i;
-          return (
-            <g key={`grid-${i}`}>
-              <line
-                x1={marginLeft}
-                y1={y}
-                x2={marginLeft + plotWidth}
-                y2={y}
-                stroke="rgba(148,163,184,0.18)"
-              />
-              <text
-                x={marginLeft - 6}
-                y={y + 4}
-                textAnchor="end"
-                fontSize="10"
-                fill="rgba(226,232,240,0.7)"
-              >
-                {value.toFixed(2)} dBm
-              </text>
-            </g>
-          );
-        })}
-        <polyline points={points} fill="none" stroke={color} strokeWidth={2} />
-        {hoverPoint && (
+        {linePath && (
           <>
-            <line
-              x1={hoverPoint.x}
-              y1={4}
-              x2={hoverPoint.x}
-              y2={4 + plotHeight}
-              stroke="rgba(148,163,184,0.45)"
+            <polyline
+              points={linePath}
+              fill="none"
+              stroke={color}
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={0.8}
             />
-            <circle cx={hoverPoint.x} cy={hoverPoint.y} r={4} fill={color} />
+            <line
+              x1={marginLeft}
+              y1={marginTop}
+              x2={marginLeft}
+              y2={height - marginBottom}
+              stroke="rgba(148,163,184,0.2)"
+              strokeWidth={1}
+            />
+            <line
+              x1={marginLeft}
+              y1={height - marginBottom}
+              x2={width - 6}
+              y2={height - marginBottom}
+              stroke="rgba(148,163,184,0.2)"
+              strokeWidth={1}
+            />
           </>
         )}
+        {points.map((p, i) => (
+          <circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r={hoverIndex === p.idx ? 8 : 6}
+            fill={color}
+            stroke="#0f172a"
+            strokeWidth={2}
+          />
+        ))}
       </svg>
-      {tooltip && hoverPoint && (
+      {hoveredPoint && (
         <div
           style={{
             position: 'absolute',
-            left: Math.min(Math.max(hoverPoint.x + 8, 0), width - 160),
-            top: Math.max(hoverPoint.y - 32, 0),
-            background: 'rgba(15, 23, 42, 0.95)',
-            border: '1px solid rgba(148, 163, 184, 0.35)',
-            borderRadius: 6,
-            padding: '4px 8px',
-            fontSize: 11,
+            left: hoveredPoint.x - 45,
+            bottom: height - marginBottom - 8,
+            transform: 'translateX(-50%)',
+            background: 'rgba(15, 23, 42, 0.98)',
+            border: `1px solid ${color}`,
+            borderRadius: 8,
+            padding: '8px 12px',
             color: '#e2e8f0',
-            pointerEvents: 'none',
-            width: 150,
+            fontSize: 11,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            zIndex: 10,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           }}
         >
-          <div>RX: {tooltip.value}</div>
-          <div style={{ color: '#94a3b8' }}>{tooltip.time}</div>
+          <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 2 }}>{labels[hoveredPoint.idx]}</div>
+          <div>{hoveredPoint.value.toFixed(2)}</div>
         </div>
       )}
-    </div>
-  );
-};
-
-type DualHistoryChartProps = {
-  primary?: { values: number[]; times: number[] };
-  secondary?: { values: number[]; times: number[] };
-  width?: number;
-  height: number;
-  primaryColor: string;
-  secondaryColor: string;
-  formatPrimary?: (value: number | null) => string;
-  formatSecondary?: (value: number | null) => string;
-};
-
-const DualHistoryChart = ({
-  primary,
-  secondary,
-  width,
-  height,
-  primaryColor,
-  secondaryColor,
-  formatPrimary,
-  formatSecondary,
-}: DualHistoryChartProps) => {
-  const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const [containerWidth, setContainerWidth] = React.useState<number>(0);
-  const clipId = React.useMemo(() => `dual-chart-clip-${Math.random().toString(36).slice(2, 8)}`, []);
-  const base = primary?.values?.length ? primary : secondary;
-  const renderWidth = width ?? (containerWidth > 0 ? containerWidth : 520);
-
-  React.useEffect(() => {
-    if (width !== undefined) {
-      return;
-    }
-    const el = containerRef.current;
-    if (!el) {
-      return;
-    }
-    const update = () => setContainerWidth(el.clientWidth);
-    update();
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(update);
-      ro.observe(el);
-      return () => ro.disconnect();
-    }
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, [width]);
-
-  if (!base || base.values.length < 2 || renderWidth <= 0) {
-    return <div style={{ fontSize: 12 }}>--</div>;
-  }
-
-  const allValues = [...(primary?.values ?? []), ...(secondary?.values ?? [])];
-  const min = Math.min(...allValues);
-  const max = Math.max(...allValues);
-  const range = max - min || 1;
-
-  const buildPoints = (series?: { values: number[] }) => {
-    if (!series || series.values.length < 2) {
-      return '';
-    }
-    return series.values
-      .map((value, index) => {
-        const x = (index / (series.values.length - 1)) * renderWidth;
-        const y = height - ((value - min) / range) * height;
-        return `${x},${y}`;
-      })
-      .join(' ');
-  };
-
-  const buildAreaPoints = (series?: { values: number[] }) => {
-    if (!series || series.values.length < 2) {
-      return '';
-    }
-    const linePoints = series.values
-      .map((value, index) => {
-        const x = (index / (series.values.length - 1)) * renderWidth;
-        const y = height - ((value - min) / range) * height;
-        return `${x},${y}`;
-      })
-      .join(' ');
-    return `${linePoints} ${renderWidth},${height} 0,${height}`;
-  };
-
-  const primaryPoints = buildPoints(primary);
-  const secondaryPoints = buildPoints(secondary);
-  const primaryArea = buildAreaPoints(primary);
-  const secondaryArea = buildAreaPoints(secondary);
-
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const idx = Math.round((x / rect.width) * (base.values.length - 1));
-    const clamped = Math.max(0, Math.min(base.values.length - 1, idx));
-    setHoverIndex(clamped);
-  };
-
-  const hover = hoverIndex !== null ? hoverIndex : null;
-  const hoverPoint =
-    hover !== null
-      ? {
-          x: (hover / (base.values.length - 1)) * renderWidth,
-          y: height - ((base.values[hover] - min) / range) * height,
-        }
-      : null;
-
-  const hoverTime = hover !== null ? base.times[hover] : null;
-  const primaryValue = hover !== null && primary?.values ? primary.values[Math.min(hover, primary.values.length - 1)] : null;
-  const secondaryValue =
-    hover !== null && secondary?.values ? secondary.values[Math.min(hover, secondary.values.length - 1)] : null;
-
-  return (
-    <div ref={containerRef} style={{ position: 'relative', width: width ?? '100%', height, overflow: 'hidden' }}>
-      <svg
-        width={renderWidth}
-        height={height}
-        viewBox={`0 0 ${renderWidth} ${height}`}
-        style={{ display: 'block' }}
-        onMouseMove={onMove}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        <defs>
-          <clipPath id={clipId}>
-            <rect x="0" y="0" width={renderWidth} height={height} />
-          </clipPath>
-        </defs>
-        {secondaryArea && (
-          <polygon
-            points={secondaryArea}
-            fill={secondaryColor}
-            opacity={0.12}
-            clipPath={`url(#${clipId})`}
-          />
-        )}
-        {primaryArea && (
-          <polygon
-            points={primaryArea}
-            fill={primaryColor}
-            opacity={0.12}
-            clipPath={`url(#${clipId})`}
-          />
-        )}
-        {secondaryPoints && (
-          <polyline
-            points={secondaryPoints}
-            fill="none"
-            stroke={secondaryColor}
-            strokeWidth={2}
-            clipPath={`url(#${clipId})`}
-          />
-        )}
-        {primaryPoints && (
-          <polyline
-            points={primaryPoints}
-            fill="none"
-            stroke={primaryColor}
-            strokeWidth={2}
-            clipPath={`url(#${clipId})`}
-          />
-        )}
-        {hoverPoint && (
-          <>
-            <line x1={hoverPoint.x} y1={0} x2={hoverPoint.x} y2={height} stroke="rgba(148,163,184,0.45)" />
-            <circle cx={hoverPoint.x} cy={hoverPoint.y} r={4} fill={primaryColor} />
-          </>
-        )}
-      </svg>
-      {hover !== null && hoverPoint && (
+      {points.map((p, i) => (
         <div
+          key={i}
           style={{
             position: 'absolute',
-            left: Math.min(Math.max(hoverPoint.x + 8, 0), renderWidth - 180),
-            top: Math.max(hoverPoint.y - 36, 0),
-            background: 'rgba(15, 23, 42, 0.95)',
-            border: '1px solid rgba(148, 163, 184, 0.35)',
-            borderRadius: 6,
-            padding: '4px 8px',
-            fontSize: 11,
-            color: '#e2e8f0',
-            pointerEvents: 'none',
-            width: 170,
+            left: p.x - 28,
+            top: height - 20,
+            width: 56,
+            textAlign: 'center',
+            fontSize: 10,
+            color: '#94a3b8',
           }}
         >
-          {hoverTime && <div style={{ color: '#94a3b8' }}>{new Date(hoverTime).toLocaleString()}</div>}
-          <div>Download: {formatPrimary ? formatPrimary(primaryValue) : primaryValue !== null ? primaryValue.toFixed(1) : '--'}</div>
-          <div>Upload: {formatSecondary ? formatSecondary(secondaryValue) : secondaryValue !== null ? secondaryValue.toFixed(1) : '--'}</div>
+          {labels[i]}
         </div>
-      )}
+      ))}
     </div>
   );
 };
-
 
 function CaptureLeafletView() {
   useMapEvents({
@@ -901,10 +725,9 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const centerLng = Number.isFinite(options.centerLng) ? options.centerLng : DEFAULT_CENTER_LNG;
   const zoom = Number.isFinite(options.zoom) ? options.zoom : DEFAULT_ZOOM;
   const transportLineAnimation = options.transportLineAnimation ?? 'flow';
+  const transportLineWeight = Math.max(1, Math.min(10, options.transportLineWeight ?? 4));
+  const transportAnimationSpeed = Math.max(1, Math.min(10, options.transportAnimationSpeed ?? 5));
   const center: [number, number] = [centerLat, centerLng];
-  const [search, setSearch] = React.useState('');
-  const [filterTerm, setFilterTerm] = React.useState('');
-  const [showSuggestions, setShowSuggestions] = React.useState(false);
   const mapRef = React.useRef<L.Map | null>(null);
   const fullscreenRef = React.useRef(false);
   const [selectedRouteId, setSelectedRouteId] = React.useState<string | null>(null);
@@ -917,8 +740,7 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const [currentZoom, setCurrentZoom] = React.useState(zoom);
   const [dashTick, setDashTick] = React.useState(0);
   const [hitboxReady, setHitboxReady] = React.useState(false);
-  const [lastInteraction, setLastInteraction] = React.useState(0);
-  const [autoFocusIndex, setAutoFocusIndex] = React.useState(0);
+  const [activeDownRouteIndex, setActiveDownRouteIndex] = React.useState(0);
   const [statsCollapsed, setStatsCollapsed] = React.useState(true);
   const [eventSearch, setEventSearch] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -927,12 +749,8 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const rightListRef = React.useRef<HTMLDivElement | null>(null);
   const linkCenterRef = React.useRef<HTMLDivElement | null>(null);
   const [linkLayout, setLinkLayout] = React.useState({ leftX: 0, rightX: 0, top: 0, height: 0, leftListTop: 0 });
-  const normalizedSearch = filterTerm.trim().toLowerCase();
   const mapZoomScale = Math.pow(2, currentZoom - zoom);
   const dataSeries = data?.series ?? [];
-  const autoFocusPauseMs = 15000;
-  const autoFocusIntervalMs = 8000;
-  const autoFocusMaxZoom = 12;
 
   React.useEffect(() => {
     const handler = () => {
@@ -1050,7 +868,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     }
   })();
 
-
   React.useEffect(() => {
     if (!options.captureNow) {
       return;
@@ -1066,20 +883,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
   const routes = options.routes ?? [];
   const pops = options.pops ?? [];
 
-  const filteredRoutes = normalizedSearch
-    ? routes.filter((route) => route.name.toLowerCase().includes(normalizedSearch))
-    : routes;
-  const filteredPops = normalizedSearch
-    ? pops.filter((pop) => pop.name.toLowerCase().includes(normalizedSearch))
-    : pops;
-
-  const suggestionRoutes = normalizedSearch
-    ? filteredRoutes
-    : routes;
-  const suggestionPops = normalizedSearch
-    ? filteredPops
-    : pops;
-
   const focusRoute = (routeId: string) => {
     const route = routes.find((r) => r.id === routeId);
     if (!route || !mapRef.current) {
@@ -1088,21 +891,11 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     if (route.points.length > 1) {
       const bounds = L.latLngBounds(route.points.map((p) => [p.lat, p.lng]));
       mapRef.current.fitBounds(bounds, { padding: [24, 24] });
-    } else if (route.points.length === 1) {
-      mapRef.current.setView([route.points[0].lat, route.points[0].lng], Math.max(zoom, 13));
     }
   };
 
-  const focusPop = (popId: string) => {
-    const pop = pops.find((p) => p.id === popId);
-    if (!pop || !mapRef.current) {
-      return;
-    }
-    mapRef.current.setView([pop.lat, pop.lng], Math.max(zoom, 13));
-  };
-
-  const selectedRoute = selectedRouteId ? routes.find((route) => route.id === selectedRouteId) ?? null : null;
-  const selectedPop = selectedPopId ? pops.find((pop) => pop.id === selectedPopId) ?? null : null;
+  const selectedRoute = selectedRouteId ? (routes.find((route) => route.id === selectedRouteId) ?? null) : null;
+  const selectedPop = selectedPopId ? (pops.find((pop) => pop.id === selectedPopId) ?? null) : null;
   const selectedRouteDistance = selectedRoute ? distanceKm(selectedRoute.points) : 0;
   const routeById = React.useMemo(() => new Map(routes.map((route) => [route.id, route] as const)), [routes]);
   const activeItemKeys = React.useMemo(() => {
@@ -1112,20 +905,38 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     }
     return keys;
   }, [routes, rxHistory, selectedPop, selectedRoute]);
-  const activeSeries = React.useMemo(() => filterSeriesByItems(dataSeries, activeItemKeys), [activeItemKeys, dataSeries]);
-  const itemValueMap = React.useMemo(() => buildItemValueMap(activeSeries, theme, timeZone), [activeSeries, theme, timeZone]);
-  const itemFormatterMap = React.useMemo(
-    () => buildItemFormatterMap(activeSeries, theme, timeZone),
+  const activeSeries = React.useMemo(
+    () => filterSeriesByItems(dataSeries, activeItemKeys),
+    [activeItemKeys, dataSeries]
+  );
+  const itemValueMap = React.useMemo(
+    () => buildItemValueMap(activeSeries, theme, timeZone),
     [activeSeries, theme, timeZone]
   );
   const itemSeriesMap = React.useMemo(() => buildItemSeriesMap(activeSeries), [activeSeries]);
   const itemSeriesTimeMap = React.useMemo(() => buildItemSeriesWithTimeMap(activeSeries), [activeSeries]);
 
+  const formatBitsPerSec = (value: number | null | undefined): string => {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+      return '--';
+    }
+    const units = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s'];
+    let unitIndex = 0;
+    let v = value;
+    while (v >= 1000 && unitIndex < units.length - 1) {
+      v /= 1000;
+      unitIndex++;
+    }
+    return `${v.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
+  };
+
   const getMetricValue = React.useCallback(
     (item?: string) => (item ? itemValueMap.get(item) : undefined),
     [itemValueMap]
   );
-  const selectedRouteCapacity = selectedRoute?.capacityItem ? getMetricValue(selectedRoute.capacityItem) : undefined;
+  const selectedRouteCapacity = selectedRoute?.capacityManualText
+    ? { text: selectedRoute.capacityManualText }
+    : undefined;
 
   const getNumericValue = React.useCallback(
     (item?: string) => {
@@ -1137,24 +948,46 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     },
     [itemValueMap]
   );
-  const getRouteMetricValue = React.useCallback(
-    (route: typeof routes[number], metricId: string) => {
-      const metric = route.metrics.find((m) => m.id === metricId);
-      return metric?.zabbixItem ? getMetricValue(metric.zabbixItem) : undefined;
-    },
-    [getMetricValue]
-  );
 
   const getRouteMetricNumeric = React.useCallback(
-    (route: typeof routes[number], metricId: string) => {
+    (route: (typeof routes)[number], metricId: string) => {
       const metric = route.metrics.find((m) => m.id === metricId);
       return metric?.zabbixItem ? getNumericValue(metric.zabbixItem) : null;
     },
     [getNumericValue]
   );
 
+  const getRouteMetricBits = React.useCallback(
+    (route: (typeof routes)[number], metricId: string): string => {
+      const numericValue = getRouteMetricNumeric(route, metricId);
+      return formatBitsPerSec(numericValue);
+    },
+    [getRouteMetricNumeric, formatBitsPerSec]
+  );
+
+  const getLastChangeMinutes = (item?: string, seriesTimeMap?: Map<string, { values: number[]; times: number[] }>) => {
+    if (!item || !seriesTimeMap) {
+      return null;
+    }
+    const series = seriesTimeMap.get(item);
+    if (!series || series.values.length < 2) {
+      return null;
+    }
+    const values = series.values;
+    const times = series.times;
+    const lastValue = values[values.length - 1];
+    for (let i = values.length - 2; i >= 0; i--) {
+      if (values[i] !== lastValue) {
+        const latestTime = times[times.length - 1];
+        const changeTime = times[i + 1];
+        return latestTime ? (latestTime - changeTime) / 60000 : null;
+      }
+    }
+    return null;
+  };
+
   const computeRouteStatus = React.useCallback(
-    (route: typeof routes[number]) => {
+    (route: (typeof routes)[number]) => {
       const base = resolveRouteStatus(route.interfaceItem, route.onlineValue, itemValueMap);
       if (base === 'down') {
         return 'down';
@@ -1170,7 +1003,7 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
       const bandwidthValue =
         downloadValue !== null && uploadValue !== null
           ? Math.max(downloadValue, uploadValue)
-          : downloadValue ?? uploadValue ?? null;
+          : (downloadValue ?? uploadValue ?? null);
       const flappingWindowMs = (thresholds.flappingWindowMin ?? 0) * 60000;
       const flappingCount = thresholds.flappingCount ?? 0;
       const series = route.interfaceItem ? itemSeriesTimeMap.get(route.interfaceItem) : undefined;
@@ -1179,7 +1012,9 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
       const inAlert =
         (thresholds.rxLow !== undefined && rxValue !== null && rxValue <= thresholds.rxLow) ||
         (thresholds.txLow !== undefined && txValue !== null && txValue <= thresholds.txLow) ||
-        (thresholds.bandwidthHigh !== undefined && bandwidthValue !== null && bandwidthValue >= thresholds.bandwidthHigh) ||
+        (thresholds.bandwidthHigh !== undefined &&
+          bandwidthValue !== null &&
+          bandwidthValue >= thresholds.bandwidthHigh) ||
         (flappingCount > 0 && flaps >= flappingCount);
 
       return inAlert ? 'alert' : base;
@@ -1192,10 +1027,14 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     selectedRouteStatus === 'online'
       ? 'Online'
       : selectedRouteStatus === 'down'
-      ? 'Down'
-      : selectedRouteStatus === 'alert'
-      ? 'Degradado'
-      : 'Sem dados';
+        ? 'Down'
+        : selectedRouteStatus === 'alert'
+          ? 'Degradado'
+          : 'Sem dados';
+  const selectedRouteDownTime =
+    selectedRoute?.interfaceItem && selectedRouteStatus === 'down'
+      ? getLastChangeMinutes(selectedRoute.interfaceItem, itemSeriesTimeMap)
+      : null;
   const downRoutes = routes.filter((route) => route.points.length > 1 && computeRouteStatus(route) === 'down');
   const normalizedEventSearch = eventSearch.trim().toLowerCase();
   const routeIncidentItems = React.useMemo(() => {
@@ -1219,12 +1058,18 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           status === 'online'
             ? route.colors.online
             : status === 'down'
-            ? route.colors.down
-            : status === 'alert'
-            ? route.colors.alert
-            : theme.colors.text.secondary;
+              ? route.colors.down
+              : status === 'alert'
+                ? route.colors.alert
+                : theme.colors.text.secondary;
         const statusLabel =
-          status === 'online' ? 'Online' : status === 'down' ? 'Critico' : status === 'alert' ? 'Degradado' : 'Sem dados';
+          status === 'online'
+            ? 'Online'
+            : status === 'down'
+              ? 'Critico'
+              : status === 'alert'
+                ? 'Degradado'
+                : 'Sem dados';
 
         return {
           id: route.id,
@@ -1279,64 +1124,25 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
       .filter((item) => item.rxNumeric !== null)
       .sort((a, b) => (a.rxNumeric ?? Number.POSITIVE_INFINITY) - (b.rxNumeric ?? Number.POSITIVE_INFINITY))
       .slice(0, 3);
-  }, [
-    getMetricValue,
-    getNumericValue,
-    routes,
-  ]);
+  }, [getMetricValue, getNumericValue, routes]);
 
   React.useEffect(() => {
     const interval = setInterval(() => {
-      setDashTick((prev) => (prev + 1) % 4000);
+      setDashTick((prev) => (prev + transportAnimationSpeed) % 4000);
     }, 60);
     return () => clearInterval(interval);
-  }, []);
+  }, [transportAnimationSpeed]);
 
   React.useEffect(() => {
-    if (downRoutes.length === 0) {
-      return;
-    }
-    setAutoFocusIndex(0);
-  }, [downRoutes.length]);
-
-  React.useEffect(() => {
-    if (downRoutes.length === 0) {
+    if (downRoutes.length <= 1) {
+      setActiveDownRouteIndex(0);
       return;
     }
     const interval = setInterval(() => {
-      setAutoFocusIndex((prev) => (prev + 1) % downRoutes.length);
-    }, autoFocusIntervalMs);
+      setActiveDownRouteIndex((prev) => (prev + 1) % downRoutes.length);
+    }, 30000);
     return () => clearInterval(interval);
-  }, [downRoutes.length, autoFocusIntervalMs]);
-
-  React.useEffect(() => {
-    if (!mapRef.current) {
-      return;
-    }
-    if (selectedRouteId) {
-      return;
-    }
-    if (downRoutes.length === 0) {
-      return;
-    }
-    const now = Date.now();
-    if (now - lastInteraction < autoFocusPauseMs) {
-      return;
-    }
-    const target = downRoutes[autoFocusIndex % downRoutes.length];
-    if (!target) {
-      return;
-    }
-    const bounds = L.latLngBounds(target.points.map((p) => [p.lat, p.lng]));
-    mapRef.current.flyToBounds(bounds, { padding: [80, 80], maxZoom: autoFocusMaxZoom });
-  }, [
-    autoFocusIndex,
-    autoFocusMaxZoom,
-    autoFocusPauseMs,
-    downRoutes,
-    lastInteraction,
-    selectedRouteId,
-  ]);
+  }, [downRoutes.length]);
 
   const formatMinutes = (value: number | null) => {
     if (value === null || value === undefined || Number.isNaN(value)) {
@@ -1348,27 +1154,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
     const hours = Math.floor(value / 60);
     const minutes = Math.round(value % 60);
     return `${hours}h ${minutes}m`;
-  };
-
-  const getLastChangeMinutes = (item?: string) => {
-    if (!item) {
-      return null;
-    }
-    const series = itemSeriesTimeMap.get(item);
-    if (!series || series.values.length < 2) {
-      return null;
-    }
-    const values = series.values;
-    const times = series.times;
-    const lastValue = values[values.length - 1];
-    for (let i = values.length - 2; i >= 0; i--) {
-      if (values[i] !== lastValue) {
-        const latestTime = times[times.length - 1];
-        const changeTime = times[i + 1];
-        return latestTime ? (latestTime - changeTime) / 60000 : null;
-      }
-    }
-    return null;
   };
 
   const getSeriesTimeUnit = (latestTime: number) => (latestTime < 1_000_000_000_000 ? 's' : 'ms');
@@ -1414,19 +1199,11 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
 
   const filterSeriesByDays = (series?: { values: number[]; times: number[] }) => series;
 
-  const matchMetric = (metrics: Array<{ name?: string; item?: string }>, tokens: string[]) => {
-    const lowerTokens = tokens.map((token) => token.toLowerCase());
-    return metrics.find((metric) => {
-      const name = metric.name?.toLowerCase() ?? '';
-      return lowerTokens.some((token) => name.includes(token));
-    });
-  };
-
   return (
     <div ref={containerRef} style={{ height: '100%', width: '100%', display: 'flex' }}>
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-      <style>
-        {`
+        <style>
+          {`
           .jmap-popup .leaflet-popup-content-wrapper,
           .jmap-tooltip.leaflet-tooltip {
             background: #0f172a;
@@ -1446,6 +1223,7 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           .jmap-route {
             stroke-linecap: round;
             stroke-linejoin: round;
+            stroke-width: var(--route-weight, 4px);
           }
           .jmap-route--online {
             stroke-dasharray: 14 10;
@@ -1454,40 +1232,47 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
           .jmap-route--alert {
             stroke-dasharray: 8 10;
             filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.45));
+            animation: jmap-alert-glow var(--anim-duration, 1s) ease-in-out infinite;
           }
           .jmap-route--mode-flow {
-            animation: jmap-flow 1.4s linear infinite;
-          }
-          .jmap-route--mode-pulse {
-            stroke-dasharray: none;
-            animation: jmap-line-beacon 1.35s ease-in-out infinite;
-          }
-          .jmap-route--down.jmap-route--mode-pulse {
-            animation: jmap-line-beacon-critical 0.85s ease-in-out infinite;
+            animation: jmap-flow var(--anim-duration, 1.4s) linear infinite;
           }
           .jmap-route--mode-static {
             stroke-dasharray: none;
           }
           .jmap-route--down {
             stroke-dasharray: 6 8;
-            animation: jmap-pulse 1.4s ease-in-out infinite;
+            animation: jmap-pulse var(--anim-duration, 1.4s) ease-in-out infinite;
             filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.55));
+          }
+          .jmap-down-alert {
+            animation: jmap-down-alert-pulse var(--anim-duration, 0.8s) ease-in-out infinite;
+          }
+          .jmap-map-container {
+            --route-weight: ${transportLineWeight}px;
+            --anim-duration: ${2.4 - transportAnimationSpeed * 0.2}s;
+          }
+          @keyframes jmap-alert-glow {
+            0%, 100% { filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.45)); }
+            50% { filter: drop-shadow(0 0 14px rgba(245, 158, 11, 0.8)); }
+          }
+          @keyframes jmap-down-alert-pulse {
+            0%, 100% { 
+              filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.55)); 
+              stroke-width: var(--route-weight, 4px);
+            }
+            50% { 
+              filter: drop-shadow(0 0 18px rgba(239, 68, 68, 0.95)); 
+              stroke-width: calc(var(--route-weight, 4px) + 3px);
+            }
           }
           @keyframes jmap-flow {
             0% { stroke-dashoffset: 0; }
             100% { stroke-dashoffset: -48; }
           }
           @keyframes jmap-pulse {
-            0%, 100% { stroke-opacity: 0.35; stroke-width: 4; }
-            50% { stroke-opacity: 1; stroke-width: 6; }
-          }
-          @keyframes jmap-line-beacon {
-            0%, 100% { stroke-opacity: 0.08; stroke-width: 3.5; }
-            50% { stroke-opacity: 1; stroke-width: 6.5; }
-          }
-          @keyframes jmap-line-beacon-critical {
-            0%, 100% { stroke-opacity: 0.05; stroke-width: 3.5; }
-            50% { stroke-opacity: 1; stroke-width: 8; }
+            0%, 100% { stroke-opacity: 0.35; stroke-width: var(--route-weight, 4px); }
+            50% { stroke-opacity: 1; stroke-width: calc(var(--route-weight, 4px) + 2px); }
           }
           .jmap-tooltip {
             pointer-events: none;
@@ -1530,306 +1315,269 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
             0%, 100% { transform: scale(1); opacity: 0.82; }
             50% { transform: scale(1.08); opacity: 0.96; }
           }
+          @keyframes jmap-hologram-fade {
+            0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+          }
+          @keyframes jmap-hologram-scan {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+          }
+          @keyframes jmap-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+          }
         `}
-      </style>
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          right: 12,
-          zIndex: 1000,
-          background: 'rgba(17, 24, 39, 0.75)',
-          border: '1px solid rgba(148, 163, 184, 0.3)',
-          borderRadius: 6,
-          padding: '6px 10px',
-          color: '#e2e8f0',
-          fontSize: 12,
-        }}
-      >
-        <input
-          type="text"
-          placeholder="Buscar rotas e POPs..."
-          value={search}
-          onChange={(e) => {
-            const value = e.currentTarget.value;
-            setSearch(value);
-            setFilterTerm(value);
-          }}
-          onFocus={() => setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#e2e8f0',
-            outline: 'none',
-            width: 220,
-          }}
-        />
-        {showSuggestions && (suggestionRoutes.length > 0 || suggestionPops.length > 0) && (
-          <div
-            style={{
-              marginTop: 6,
-              maxHeight: 220,
-              overflowY: 'auto',
-              background: 'rgba(15, 23, 42, 0.95)',
-              border: '1px solid rgba(148, 163, 184, 0.25)',
-              borderRadius: 6,
-              padding: 6,
-            }}
-          >
-            {suggestionRoutes.map((route) => (
-              <div
-                key={`route-${route.id}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  focusRoute(route.id);
-                  setSearch(route.name);
-                  setFilterTerm('');
-                }}
-                style={{
-                  padding: '6px 8px',
-                  cursor: 'pointer',
-                  borderRadius: 4,
-                }}
-              >
-                Rota: {route.name || 'Sem nome'}
-              </div>
-            ))}
-            {suggestionPops.map((pop) => (
-              <div
-                key={`pop-${pop.id}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  focusPop(pop.id);
-                  setSearch(pop.name);
-                  setFilterTerm('');
-                }}
-                style={{
-                  padding: '6px 8px',
-                  cursor: 'pointer',
-                  borderRadius: 4,
-                }}
-              >
-                POP: {pop.name || 'Sem nome'}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+        </style>
 
-      <button
-        type="button"
-        aria-label="Fullscreen"
-        title="Fullscreen"
-        onClick={() => {
-          const container = containerRef.current ?? mapRef.current?.getContainer();
-          if (!container) {
-            return;
-          }
-          if (!document.fullscreenElement) {
-            container.requestFullscreen?.();
-            const map = mapRef.current;
-            if (map) {
-              setTimeout(() => {
-                map.invalidateSize();
-                const current = map.getCenter();
-                map.setView([current.lat, current.lng], map.getZoom(), { animate: false });
-              }, 120);
+        <button
+          type="button"
+          aria-label="Fullscreen"
+          title="Fullscreen"
+          onClick={() => {
+            const container = containerRef.current ?? mapRef.current?.getContainer();
+            if (!container) {
+              return;
             }
-            return;
-          }
-          document.exitFullscreen?.();
-        }}
-        style={{
-          position: 'absolute',
-          top: 78,
-          left: 12,
-          zIndex: 1000,
-          width: 32,
-          height: 32,
-          borderRadius: 4,
-          border: '1px solid rgba(0,0,0,0.2)',
-          background: '#fff',
-          color: '#1f2937',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-          fontSize: 16,
-        }}
-      >
-        ⛶
-      </button>
-
-      {selectedRoute && (
-        <div
+            if (!document.fullscreenElement) {
+              container.requestFullscreen?.();
+              const map = mapRef.current;
+              if (map) {
+                setTimeout(() => {
+                  map.invalidateSize();
+                  const current = map.getCenter();
+                  map.setView([current.lat, current.lng], map.getZoom(), { animate: false });
+                }, 120);
+              }
+              return;
+            }
+            document.exitFullscreen?.();
+          }}
           style={{
             position: 'absolute',
-            inset: 0,
-            zIndex: 1200,
-            background: 'rgba(2, 6, 23, 0.58)',
+            top: 78,
+            left: 12,
+            zIndex: 1000,
+            width: 32,
+            height: 32,
+            borderRadius: 4,
+            border: '1px solid rgba(0,0,0,0.2)',
+            background: '#fff',
+            color: '#1f2937',
+            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: 16,
+            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+            fontSize: 16,
           }}
         >
+          ⛶
+        </button>
+
+        {selectedRoute && (
           <div
             style={{
-              width: 'min(980px, 94vw)',
-              maxHeight: '82vh',
-              background: theme.colors.background.primary,
-              border: `1px solid ${theme.colors.border.medium}`,
-              borderRadius: 12,
-              padding: 16,
-              color: theme.colors.text.primary,
+              position: 'absolute',
+              inset: 0,
+              zIndex: 1200,
+              background: 'rgba(2, 6, 23, 0.58)',
               display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              overflow: 'hidden',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedRoute.name || 'Sem nome'}</div>
-                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                  Distancia total: {selectedRouteDistance.toFixed(2)} km
+            <div
+              style={{
+                width: 'min(980px, 94vw)',
+                maxHeight: '82vh',
+                background: theme.colors.background.primary,
+                border: `1px solid ${theme.colors.border.medium}`,
+                borderRadius: 12,
+                padding: 16,
+                color: theme.colors.text.primary,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                overflow: 'hidden',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedRoute.name || 'Sem nome'}</div>
+                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                    Distancia total: {selectedRouteDistance.toFixed(2)} km
+                  </div>
                 </div>
+                <button
+                  onClick={() => setSelectedRouteId(null)}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${theme.colors.border.weak}`,
+                    color: theme.colors.text.primary,
+                    padding: '4px 10px',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Fechar
+                </button>
               </div>
-              <button
-                onClick={() => setSelectedRouteId(null)}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  color: theme.colors.text.primary,
-                  padding: '4px 10px',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                }}
-              >
-                Fechar
-              </button>
-            </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-              <div
-                style={{
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  borderRadius: 10,
-                  padding: 10,
-                  background: theme.colors.background.secondary,
-                }}
-              >
-                <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
-                  Status
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+                <div
+                  style={{
+                    border: `1px solid ${theme.colors.border.weak}`,
+                    borderRadius: 10,
+                    padding: 10,
+                    background: theme.colors.background.secondary,
+                  }}
+                >
+                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                    Status
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background:
+                          selectedRouteStatus === 'online'
+                            ? 'rgba(16, 185, 129, 0.15)'
+                            : selectedRouteStatus === 'down'
+                              ? 'rgba(239, 68, 68, 0.15)'
+                              : 'rgba(245, 158, 11, 0.15)',
+                        border:
+                          selectedRouteStatus === 'online'
+                            ? '1px solid rgba(16, 185, 129, 0.35)'
+                            : selectedRouteStatus === 'down'
+                              ? '1px solid rgba(239, 68, 68, 0.35)'
+                              : '1px solid rgba(245, 158, 11, 0.35)',
+                      }}
+                    >
+                      {selectedRouteStatusLabel}
+                    </span>
+                  </div>
+                  {selectedRouteDownTime !== null && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 10,
+                        borderRadius: 8,
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        border: '1px solid rgba(239, 68, 68, 0.35)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: '#fca5a5',
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                          marginBottom: 4,
+                        }}
+                      >
+                        SLA - Tempo fora
+                      </div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#f87171' }}>
+                        {formatMinutes(selectedRouteDownTime)}
+                      </div>
+                      <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 4 }}>
+                        {selectedRouteDownTime < 60
+                          ? 'Menos de 1 hora'
+                          : selectedRouteDownTime < 1440
+                            ? `${Math.floor(selectedRouteDownTime / 60)}h ${Math.round(selectedRouteDownTime % 60)}m`
+                            : `${Math.floor(selectedRouteDownTime / 1440)}d ${Math.floor((selectedRouteDownTime % 1440) / 60)}h`}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      padding: '4px 10px',
-                      borderRadius: 999,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      background:
-                        selectedRouteStatus === 'online'
-                          ? 'rgba(16, 185, 129, 0.15)'
-                          : selectedRouteStatus === 'down'
-                          ? 'rgba(239, 68, 68, 0.15)'
-                          : 'rgba(245, 158, 11, 0.15)',
-                      border:
-                        selectedRouteStatus === 'online'
-                          ? '1px solid rgba(16, 185, 129, 0.35)'
-                          : selectedRouteStatus === 'down'
-                          ? '1px solid rgba(239, 68, 68, 0.35)'
-                          : '1px solid rgba(245, 158, 11, 0.35)',
-                    }}
-                  >
-                    {selectedRouteStatusLabel}
-                  </span>
-                </div>
-              </div>
-              <div
-                style={{
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  borderRadius: 10,
-                  padding: 10,
-                  background: theme.colors.background.secondary,
-                }}
-              >
-                <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
-                  Capacidade total
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>
-                    {selectedRouteCapacity?.text ?? '--'} GB
+                <div
+                  style={{
+                    border: `1px solid ${theme.colors.border.weak}`,
+                    borderRadius: 10,
+                    padding: 10,
+                    background: theme.colors.background.secondary,
+                  }}
+                >
+                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                    Capacidade total
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>{selectedRouteCapacity?.text ?? '--'}</div>
                   </div>
                 </div>
               </div>
 
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 12,
-                overflowY: 'auto',
-                paddingRight: 4,
-              }}
-            >
               <div
                 style={{
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  borderRadius: 10,
-                  padding: 12,
-                  background: theme.colors.background.secondary,
-                  position: 'relative',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  overflowY: 'auto',
+                  paddingRight: 4,
                 }}
-                ref={linkCardRef}
               >
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Sinais em tempo real (TX/RX)</div>
-                {(() => {
-                  const trunks = selectedRoute.trunks ?? [];
-                  if (trunks.length === 0) {
-                    return <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum trunk cadastrado</div>;
-                  }
-                  const leftTrunk = trunks[0];
-                  const rightTrunk = trunks[1] ?? null;
-                  const allSides = [
-                    ...leftTrunk.interfaces.map((iface) => iface.side).filter(Boolean),
-                    ...(rightTrunk?.interfaces.map((iface) => iface.side).filter(Boolean) ?? []),
-                  ] as Array<'A' | 'B' | 'C' | 'D' | 'E'>;
-                  const sides = Array.from(new Set(allSides));
-                  const leftBySide = new Map(
-                    sides.map((side) => [side, leftTrunk.interfaces.find((i) => i.side === side)])
-                  );
-                  const rightBySide = rightTrunk
-                    ? new Map(sides.map((side) => [side, rightTrunk.interfaces.find((i) => i.side === side)]))
-                    : new Map();
-                  const rowHeight = 46;
-                  const rowGap = 8;
-                  const rowsHeight = sides.length * rowHeight + Math.max(0, sides.length - 1) * rowGap;
-                  return (
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: rightTrunk ? '1fr 260px 1fr' : '1fr',
-                        gridTemplateRows: rightTrunk ? 'auto 1fr' : 'auto',
-                        gap: 12,
-                        alignItems: 'stretch',
-                      }}
-                    >
-                      <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2' }}>
-                        <div style={{ fontSize: 12, fontWeight: 600 }}>{leftTrunk.name || 'Cidade 1'}</div>
-                        {leftTrunk.description ? (
-                          <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 }}>
-                            {leftTrunk.description}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div ref={leftListRef} style={{ marginTop: 8, display: 'grid', gap: rowGap, gridColumn: '1 / 2', gridRow: '2 / 3' }}>
+                <div
+                  style={{
+                    border: `1px solid ${theme.colors.border.weak}`,
+                    borderRadius: 10,
+                    padding: 12,
+                    background: theme.colors.background.secondary,
+                    position: 'relative',
+                  }}
+                  ref={linkCardRef}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Sinais em tempo real (TX/RX)</div>
+                  {(() => {
+                    const trunks = selectedRoute.trunks ?? [];
+                    if (trunks.length === 0) {
+                      return (
+                        <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum trunk cadastrado</div>
+                      );
+                    }
+                    const leftTrunk = trunks[0];
+                    const rightTrunk = trunks[1] ?? null;
+                    const allSides = [
+                      ...leftTrunk.interfaces.map((iface) => iface.side).filter(Boolean),
+                      ...(rightTrunk?.interfaces.map((iface) => iface.side).filter(Boolean) ?? []),
+                    ] as Array<'A' | 'B' | 'C' | 'D' | 'E'>;
+                    const sides = Array.from(new Set(allSides));
+                    const leftBySide = new Map(
+                      sides.map((side) => [side, leftTrunk.interfaces.find((i) => i.side === side)])
+                    );
+                    const rightBySide = rightTrunk
+                      ? new Map(sides.map((side) => [side, rightTrunk.interfaces.find((i) => i.side === side)]))
+                      : new Map();
+                    const rowHeight = 46;
+                    const rowGap = 8;
+                    const rowsHeight = sides.length * rowHeight + Math.max(0, sides.length - 1) * rowGap;
+                    return (
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: rightTrunk ? '1fr 260px 1fr' : '1fr',
+                          gridTemplateRows: rightTrunk ? 'auto 1fr' : 'auto',
+                          gap: 12,
+                          alignItems: 'stretch',
+                        }}
+                      >
+                        <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2' }}>
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>{leftTrunk.name || 'Cidade 1'}</div>
+                          {leftTrunk.description ? (
+                            <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 }}>
+                              {leftTrunk.description}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div
+                          ref={leftListRef}
+                          style={{ marginTop: 8, display: 'grid', gap: rowGap, gridColumn: '1 / 2', gridRow: '2 / 3' }}
+                        >
                           {sides.map((side) => {
                             const iface = leftBySide.get(side);
                             const txValue = iface?.txItem ? getMetricValue(iface.txItem) : undefined;
@@ -1854,7 +1602,9 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                                   borderRadius: 8,
                                   padding: '6px 8px',
                                   background:
-                                    selectedLinkSide === side ? theme.colors.background.canvas : theme.colors.background.primary,
+                                    selectedLinkSide === side
+                                      ? theme.colors.background.canvas
+                                      : theme.colors.background.primary,
                                   color: theme.colors.text.primary,
                                   cursor: 'pointer',
                                   textAlign: 'left',
@@ -1862,508 +1612,405 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                               >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
                                   <div style={{ fontWeight: 600 }}>
-                                    {iface?.name || '--'} <span style={{ color: theme.colors.text.secondary }}>({side})</span>
+                                    {iface?.name || '--'}{' '}
+                                    <span style={{ color: theme.colors.text.secondary }}>({side})</span>
                                   </div>
                                   <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
-                                    <span>TX: <strong>{txValue?.text ?? '--'}</strong></span>
-                                    <span>RX: <strong>{rxValue?.text ?? '--'}</strong></span>
+                                    <span>
+                                      TX: <strong>{txValue?.text ?? '--'}</strong>
+                                    </span>
+                                    <span>
+                                      RX: <strong>{rxValue?.text ?? '--'}</strong>
+                                    </span>
                                   </div>
                                 </div>
                               </button>
                             );
                           })}
-                      </div>
+                        </div>
 
-                      {rightTrunk && (
-                        <>
-                          <div style={{ gridColumn: '3 / 4', gridRow: '1 / 2' }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
-                              {rightTrunk.name || 'Cidade 2'}
-                            </div>
-                            {rightTrunk.description ? (
-                              <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2, textAlign: 'right' }}>
-                                {rightTrunk.description}
+                        {rightTrunk && (
+                          <>
+                            <div style={{ gridColumn: '3 / 4', gridRow: '1 / 2' }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
+                                {rightTrunk.name || 'Cidade 2'}
                               </div>
-                            ) : null}
-                          </div>
-                          <div ref={rightListRef} style={{ marginTop: 8, display: 'grid', gap: rowGap, gridColumn: '3 / 4', gridRow: '2 / 3' }}>
-                            {sides.map((side) => {
-                              const iface = rightBySide.get(side);
-                              const txValue = iface?.txItem ? getMetricValue(iface.txItem) : undefined;
-                              const rxValue = iface?.rxItem ? getMetricValue(iface.rxItem) : undefined;
-                              return (
-                              <button
-                                key={`right-${side}`}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedLinkSide(side);
-                                  if (iface?.rxItem) {
-                                    const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
-                                    setRxHistory({
-                                      name: iface.name || 'Interface',
-                                      series,
-                                    });
-                                  }
-                                }}
-                                style={{
-                                  height: rowHeight,
-                                    border: `1px solid ${theme.colors.border.weak}`,
-                                    borderRadius: 8,
-                                    padding: '6px 8px',
-                                    background:
-                                      selectedLinkSide === side ? theme.colors.background.canvas : theme.colors.background.primary,
-                                    color: theme.colors.text.primary,
-                                    cursor: 'pointer',
-                                    textAlign: 'left',
+                              {rightTrunk.description ? (
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: theme.colors.text.secondary,
+                                    marginTop: 2,
+                                    textAlign: 'right',
                                   }}
                                 >
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
-                                    <div style={{ fontWeight: 600 }}>
-                                      {iface?.name || '--'} <span style={{ color: theme.colors.text.secondary }}>({side})</span>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
-                                      <span>TX: <strong>{txValue?.text ?? '--'}</strong></span>
-                                      <span>RX: <strong>{rxValue?.text ?? '--'}</strong></span>
-                                    </div>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <div
-                            ref={linkCenterRef}
-                            style={{
-                              gridColumn: '2 / 3',
-                              gridRow: '2 / 3',
-                              position: 'relative',
-                              minHeight: rowsHeight,
-                              marginTop: 8,
-                              pointerEvents: 'none',
-                            }}
-                          >
-                            <svg
-                              width={Math.max(0, linkLayout.rightX - linkLayout.leftX)}
-                              height={rowsHeight}
-                              viewBox={`0 0 ${Math.max(0, linkLayout.rightX - linkLayout.leftX)} ${rowsHeight}`}
-                              preserveAspectRatio="none"
+                                  {rightTrunk.description}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div
+                              ref={rightListRef}
                               style={{
-                                position: 'absolute',
-                                left: linkLayout.leftX,
-                                top: 0,
+                                marginTop: 8,
+                                display: 'grid',
+                                gap: rowGap,
+                                gridColumn: '3 / 4',
+                                gridRow: '2 / 3',
                               }}
                             >
-                              {sides.map((side, idx) => {
-                                const leftIface = leftBySide.get(side);
-                                const rightIface = rightBySide.get(side);
-                                if (!leftIface || !rightIface) {
-                                  return null;
-                                }
-                                const leftRx = leftIface.rxItem ? getNumericValue(leftIface.rxItem) : null;
-                                const rightRx = rightIface.rxItem ? getNumericValue(rightIface.rxItem) : null;
-                                const down = (leftRx !== null && leftRx <= -35) || (rightRx !== null && rightRx <= -35);
-                                const y = idx * (rowHeight + rowGap) + rowHeight / 2;
-                                const width = Math.max(0, linkLayout.rightX - linkLayout.leftX);
-                                const color = down ? '#ef4444' : '#22c55e';
+                              {sides.map((side) => {
+                                const iface = rightBySide.get(side);
+                                const txValue = iface?.txItem ? getMetricValue(iface.txItem) : undefined;
+                                const rxValue = iface?.rxItem ? getMetricValue(iface.rxItem) : undefined;
                                 return (
-                                  <g key={`link-${side}`}>
-                                    <line
-                                    x1={0}
-                                    y1={y}
-                                    x2={width}
-                                    y2={y}
-                                    stroke={color}
-                                    strokeWidth={2.5}
-                                    strokeDasharray="8 6"
-                                    className="jmap-fiber-line"
-                                  />
-                                  <circle cx={0} cy={y} r="4" fill={color} />
-                                  <circle cx={width} cy={y} r="4" fill={color} />
-                                  <text
-                                    x={width / 2}
-                                    y={y - 6}
-                                    textAnchor="middle"
-                                    fill={theme.colors.text.secondary}
-                                    fontSize="10"
+                                  <button
+                                    key={`right-${side}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedLinkSide(side);
+                                      if (iface?.rxItem) {
+                                        const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
+                                        setRxHistory({
+                                          name: iface.name || 'Interface',
+                                          series,
+                                        });
+                                      }
+                                    }}
+                                    style={{
+                                      height: rowHeight,
+                                      border: `1px solid ${theme.colors.border.weak}`,
+                                      borderRadius: 8,
+                                      padding: '6px 8px',
+                                      background:
+                                        selectedLinkSide === side
+                                          ? theme.colors.background.canvas
+                                          : theme.colors.background.primary,
+                                      color: theme.colors.text.primary,
+                                      cursor: 'pointer',
+                                      textAlign: 'left',
+                                    }}
                                   >
-                                    {side}
-                                  </text>
-                                </g>
-                              );
-                            })}
-                            </svg>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              <div
-                style={{
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  borderRadius: 10,
-                  padding: 12,
-                  background: theme.colors.background.secondary,
-                }}
-              >
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-                  Download / Upload em tempo real
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 6 }}>
-                  <div>Download: {getRouteMetricValue(selectedRoute, 'download')?.text ?? '--'}</div>
-                  <div>Upload: {getRouteMetricValue(selectedRoute, 'upload')?.text ?? '--'}</div>
-                </div>
-                <div style={{ display: 'flex', gap: 12, fontSize: 11, marginBottom: 6 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: theme.colors.success.main }} />
-                    Download
-                  </span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: theme.colors.warning.main }} />
-                    Upload
-                  </span>
-                </div>
-                {(() => {
-                  const downloadItem = selectedRoute.metrics.find((m) => m.id === 'download')?.zabbixItem;
-                  const uploadItem = selectedRoute.metrics.find((m) => m.id === 'upload')?.zabbixItem;
-                  const downloadFormatter = downloadItem ? itemFormatterMap.get(downloadItem) : undefined;
-                  const uploadFormatter = uploadItem ? itemFormatterMap.get(uploadItem) : undefined;
-                  return (
-                    <DualHistoryChart
-                      primary={itemSeriesTimeMap.get(downloadItem ?? '')}
-                      secondary={itemSeriesTimeMap.get(uploadItem ?? '')}
-                      height={140}
-                      primaryColor={theme.colors.success.main}
-                      secondaryColor={theme.colors.warning.main}
-                      formatPrimary={(value) =>
-                        value === null || value === undefined
-                          ? '--'
-                          : downloadFormatter
-                            ? downloadFormatter(value)
-                            : value.toFixed(1)
-                      }
-                      formatSecondary={(value) =>
-                        value === null || value === undefined
-                          ? '--'
-                          : uploadFormatter
-                            ? uploadFormatter(value)
-                            : value.toFixed(1)
-                      }
-                    />
-                  );
-                })()}
-                <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 6 }}>
-                  Janela de tempo segue o intervalo do Grafana.
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
-
-      {rxHistory && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            zIndex: 1250,
-            background: 'rgba(2, 6, 23, 0.58)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              width: 'min(760px, 92vw)',
-              maxHeight: '80vh',
-              background: theme.colors.background.primary,
-              border: `1px solid ${theme.colors.border.medium}`,
-              borderRadius: 12,
-              padding: 16,
-              color: theme.colors.text.primary,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-            }}
-          >
-            {(() => {
-              const filteredSeries = filterSeriesByDays(rxHistory.series);
-              return (
-            <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>
-                Historico RX - {rxHistory.name}
-                {null}
-              </div>
-              <button
-                onClick={() => setRxHistory(null)}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  color: theme.colors.text.primary,
-                  padding: '4px 10px',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                }}
-              >
-                Fechar
-              </button>
-            </div>
-            <div style={{ border: `1px solid ${theme.colors.border.weak}`, borderRadius: 10, padding: 12 }}>
-              <HistoryLineChart
-                series={filteredSeries}
-                width={680}
-                height={180}
-                color={theme.colors.success.main}
-              />
-              <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 6 }}>
-                Janela segue o intervalo do Grafana.
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-              {buildHistoryWindows(filteredSeries).map((entry) => (
-                <div
-                  key={entry.label}
-                  style={{
-                    border: `1px solid ${theme.colors.border.weak}`,
-                    borderRadius: 10,
-                    padding: 10,
-                    background: theme.colors.background.secondary,
-                  }}
-                >
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
-                    {entry.label}
-                  </div>
-                  <div style={{ fontSize: 12, marginTop: 6 }}>
-                    Min: {entry.min !== null ? entry.min.toFixed(2) : '--'}
-                  </div>
-                  <div style={{ fontSize: 12 }}>
-                    Max: {entry.max !== null ? entry.max.toFixed(2) : '--'}
-                  </div>
-                  <div style={{ fontSize: 12 }}>
-                    Med: {entry.avg !== null ? entry.avg.toFixed(2) : '--'}
-                  </div>
-                </div>
-              ))}
-            </div>
-            </>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-
-      {selectedPop && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            zIndex: 1200,
-            background: 'rgba(2, 6, 23, 0.58)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              width: 'min(980px, 94vw)',
-              maxHeight: '82vh',
-              background: theme.colors.background.primary,
-              border: `1px solid ${theme.colors.border.medium}`,
-              borderRadius: 12,
-              padding: 16,
-              color: theme.colors.text.primary,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              overflow: 'hidden',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedPop.name || 'Sem nome'}</div>
-                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                  {selectedPop.lat.toFixed(4)}, {selectedPop.lng.toFixed(4)}
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedPopId(null)}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${theme.colors.border.weak}`,
-                  color: theme.colors.text.primary,
-                  padding: '4px 10px',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                }}
-              >
-                Fechar
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-              {(selectedPop.equipments ?? []).length === 0 ? (
-                <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>
-                  Nenhum equipamento cadastrado
-                </div>
-              ) : (
-                selectedPop.equipments.map((equipment) => {
-                  const statusValue = equipment.statusItem ? getMetricValue(equipment.statusItem) : undefined;
-                  const status = resolveRouteStatus(
-                    equipment.statusItem,
-                    equipment.onlineValue ?? '1',
-                    itemValueMap
-                  );
-                  const lastChange = getLastChangeMinutes(equipment.statusItem);
-                  const baseMetrics = equipment.metrics ?? [];
-                  const cpuMetric = equipment.cpuItem ? { id: 'cpu', item: equipment.cpuItem } : matchMetric(baseMetrics, ['cpu']);
-                  const memMetric = equipment.memoryItem
-                    ? { id: 'memory', item: equipment.memoryItem }
-                    : matchMetric(baseMetrics, ['mem', 'memory', 'ram']);
-                  const tempMetric = equipment.temperatureItem
-                    ? { id: 'temp', item: equipment.temperatureItem }
-                    : matchMetric(baseMetrics, ['temp', 'temperatura', 'temperature']);
-                  const uptimeMetric = equipment.uptimeItem
-                    ? { id: 'uptime', item: equipment.uptimeItem }
-                    : matchMetric(baseMetrics, ['uptime', 'tempo ligado']);
-                  const systemMetricIds = new Set(
-                    [cpuMetric, memMetric, tempMetric, uptimeMetric]
-                      .filter((metric): metric is { id: string; item?: string } => Boolean(metric && 'id' in metric))
-                      .map((metric) => metric.id)
-                  );
-                  const visibleMetrics = baseMetrics.filter(
-                    (metric) => (metric.showInDetails ?? true) && metric.item
-                  );
-
-                  return (
-                    <div
-                      key={equipment.id}
-                      style={{
-                        border: `1px solid ${theme.colors.border.weak}`,
-                        borderRadius: 10,
-                        padding: 12,
-                        background: theme.colors.background.secondary,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 700 }}>{equipment.name || 'Equipamento'}</div>
-                          <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                            {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
-                          </div>
-                        </div>
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            padding: '4px 10px',
-                            borderRadius: 999,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            background:
-                              status === 'online'
-                                ? 'rgba(16, 185, 129, 0.15)'
-                                : status === 'down'
-                                ? 'rgba(239, 68, 68, 0.15)'
-                                : 'rgba(245, 158, 11, 0.15)',
-                            border:
-                              status === 'online'
-                                ? '1px solid rgba(16, 185, 129, 0.35)'
-                                : status === 'down'
-                                ? '1px solid rgba(239, 68, 68, 0.35)'
-                                : '1px solid rgba(245, 158, 11, 0.35)',
-                          }}
-                        >
-                          {status === 'online' ? 'Online' : status === 'down' ? 'Down' : 'Sem dados'}
-                        </span>
-                      </div>
-
-                      <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                        Status: <span style={{ color: theme.colors.text.primary }}>{statusValue?.text ?? '--'}</span>
-                        {lastChange !== null && (
-                          <span style={{ marginLeft: 8 }}>Última mudança: {formatMinutes(lastChange)}</span>
+                                    <div
+                                      style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}
+                                    >
+                                      <div style={{ fontWeight: 600 }}>
+                                        {iface?.name || '--'}{' '}
+                                        <span style={{ color: theme.colors.text.secondary }}>({side})</span>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
+                                        <span>
+                                          TX: <strong>{txValue?.text ?? '--'}</strong>
+                                        </span>
+                                        <span>
+                                          RX: <strong>{rxValue?.text ?? '--'}</strong>
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div
+                              ref={linkCenterRef}
+                              style={{
+                                gridColumn: '2 / 3',
+                                gridRow: '2 / 3',
+                                position: 'relative',
+                                minHeight: rowsHeight,
+                                marginTop: 8,
+                                pointerEvents: 'none',
+                              }}
+                            >
+                              <svg
+                                width={Math.max(0, linkLayout.rightX - linkLayout.leftX)}
+                                height={rowsHeight}
+                                viewBox={`0 0 ${Math.max(0, linkLayout.rightX - linkLayout.leftX)} ${rowsHeight}`}
+                                preserveAspectRatio="none"
+                                style={{
+                                  position: 'absolute',
+                                  left: linkLayout.leftX,
+                                  top: 0,
+                                }}
+                              >
+                                {sides.map((side, idx) => {
+                                  const leftIface = leftBySide.get(side);
+                                  const rightIface = rightBySide.get(side);
+                                  if (!leftIface || !rightIface) {
+                                    return null;
+                                  }
+                                  const leftRx = leftIface.rxItem ? getNumericValue(leftIface.rxItem) : null;
+                                  const rightRx = rightIface.rxItem ? getNumericValue(rightIface.rxItem) : null;
+                                  const down =
+                                    (leftRx !== null && leftRx <= -35) || (rightRx !== null && rightRx <= -35);
+                                  const y = idx * (rowHeight + rowGap) + rowHeight / 2;
+                                  const width = Math.max(0, linkLayout.rightX - linkLayout.leftX);
+                                  const color = down ? '#ef4444' : '#22c55e';
+                                  return (
+                                    <g key={`link-${side}`}>
+                                      <line
+                                        x1={0}
+                                        y1={y}
+                                        x2={width}
+                                        y2={y}
+                                        stroke={color}
+                                        strokeWidth={2.5}
+                                        strokeDasharray="8 6"
+                                        className="jmap-fiber-line"
+                                      />
+                                      <circle cx={0} cy={y} r="4" fill={color} />
+                                      <circle cx={width} cy={y} r="4" fill={color} />
+                                      <text
+                                        x={width / 2}
+                                        y={y - 6}
+                                        textAnchor="middle"
+                                        fill={theme.colors.text.secondary}
+                                        fontSize="10"
+                                      >
+                                        {side}
+                                      </text>
+                                    </g>
+                                  );
+                                })}
+                              </svg>
+                            </div>
+                          </>
                         )}
                       </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-                        {[
-                          {
-                            label: 'CPU',
-                            metric: equipment.cpuShow === false ? undefined : cpuMetric,
-                            color: theme.colors.success.main,
-                          },
-                          {
-                            label: 'Memória',
-                            metric: equipment.memoryShow === false ? undefined : memMetric,
-                            color: theme.colors.warning.main,
-                          },
-                          {
-                            label: 'Temperatura',
-                            metric: equipment.temperatureShow === false ? undefined : tempMetric,
-                            color: theme.colors.info.main,
-                          },
-                          {
-                            label: 'Uptime',
-                            metric: equipment.uptimeShow === false ? undefined : uptimeMetric,
-                            color: theme.colors.primary.main,
-                          },
-                        ].map((entry) => {
-                          const value = entry.metric?.item ? getMetricValue(entry.metric.item) : undefined;
-                          const series = entry.metric?.item ? itemSeriesMap.get(entry.metric.item) : undefined;
-                          return (
-                            <div
-                              key={entry.label}
-                              style={{
-                                border: `1px solid ${theme.colors.border.weak}`,
-                                borderRadius: 10,
-                                padding: 8,
-                                background: theme.colors.background.primary,
-                                minHeight: 110,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 6,
-                              }}
-                            >
-                              <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
-                                {entry.label}
-                              </div>
-                              <div style={{ fontSize: 14, fontWeight: 700 }}>{value?.text ?? '--'}</div>
-                              <Sparkline values={series} width={180} height={44} color={entry.color} />
-                            </div>
-                          );
-                        })}
+        {rxHistory && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 1250,
+              background: 'rgba(2, 6, 23, 0.58)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                width: 'min(760px, 92vw)',
+                maxHeight: '80vh',
+                background: theme.colors.background.primary,
+                border: `1px solid ${theme.colors.border.medium}`,
+                borderRadius: 12,
+                padding: 16,
+                color: theme.colors.text.primary,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              {(() => {
+                const filteredSeries = filterSeriesByDays(rxHistory.series);
+                return (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>
+                        Historico RX - {rxHistory.name}
+                        {null}
                       </div>
-
-                      {equipment.observationShow !== false && equipment.observation?.trim() && (
+                      <button
+                        onClick={() => setRxHistory(null)}
+                        style={{
+                          background: 'transparent',
+                          border: `1px solid ${theme.colors.border.weak}`,
+                          color: theme.colors.text.primary,
+                          padding: '4px 10px',
+                          borderRadius: 8,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Fechar
+                      </button>
+                    </div>
+                    <div style={{ border: `1px solid ${theme.colors.border.weak}`, borderRadius: 10, padding: 12 }}>
+                      <SignalTrendChart
+                        series={filteredSeries}
+                        width={680}
+                        height={180}
+                        color={theme.colors.success.main}
+                      />
+                      <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 6 }}>
+                        Tendência: 30 dias, 15 dias e Atual
+                      </div>
+                    </div>
+                    <div
+                      style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}
+                    >
+                      {buildHistoryWindows(filteredSeries).map((entry) => (
                         <div
+                          key={entry.label}
                           style={{
                             border: `1px solid ${theme.colors.border.weak}`,
-                            borderRadius: 8,
-                            padding: 8,
-                            background: theme.colors.background.primary,
-                            fontSize: 12,
+                            borderRadius: 10,
+                            padding: 10,
+                            background: theme.colors.background.secondary,
                           }}
                         >
                           <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
-                            Observação
+                            {entry.label}
                           </div>
-                          <div>{equipment.observation}</div>
+                          <div style={{ fontSize: 12, marginTop: 6 }}>
+                            Min: {entry.min !== null ? entry.min.toFixed(2) : '--'}
+                          </div>
+                          <div style={{ fontSize: 12 }}>Max: {entry.max !== null ? entry.max.toFixed(2) : '--'}</div>
+                          <div style={{ fontSize: 12 }}>Med: {entry.avg !== null ? entry.avg.toFixed(2) : '--'}</div>
                         </div>
-                      )}
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        )}
 
-                      {visibleMetrics.filter((metric) => !systemMetricIds.has(metric.id)).length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {visibleMetrics
-                            .filter((metric) => !systemMetricIds.has(metric.id))
-                            .map((metric) => {
+        {selectedPop && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 1200,
+              background: 'rgba(2, 6, 23, 0.58)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                width: 'min(980px, 94vw)',
+                maxHeight: '82vh',
+                background: theme.colors.background.primary,
+                border: `1px solid ${theme.colors.border.medium}`,
+                borderRadius: 12,
+                padding: 16,
+                color: theme.colors.text.primary,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                overflow: 'hidden',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedPop.name || 'Sem nome'}</div>
+                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                    {selectedPop.lat.toFixed(4)}, {selectedPop.lng.toFixed(4)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedPopId(null)}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${theme.colors.border.weak}`,
+                    color: theme.colors.text.primary,
+                    padding: '4px 10px',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Fechar
+                </button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                {(selectedPop.equipments ?? []).length === 0 ? (
+                  <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum equipamento cadastrado</div>
+                ) : (
+                  selectedPop.equipments.map((equipment) => {
+                    const statusValue = equipment.statusItem ? getMetricValue(equipment.statusItem) : undefined;
+                    const status = resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap);
+                    const lastChange = getLastChangeMinutes(equipment.statusItem, itemSeriesTimeMap);
+                    const visibleMetrics =
+                      equipment.metrics?.filter((metric) => (metric.showInDetails ?? true) && metric.item) ?? [];
+
+                    return (
+                      <div
+                        key={equipment.id}
+                        style={{
+                          border: `1px solid ${theme.colors.border.weak}`,
+                          borderRadius: 10,
+                          padding: 12,
+                          background: theme.colors.background.secondary,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 8,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700 }}>{equipment.name || 'Equipamento'}</div>
+                            <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                              {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
+                            </div>
+                          </div>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '4px 10px',
+                              borderRadius: 999,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              background:
+                                status === 'online'
+                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  : status === 'down'
+                                    ? 'rgba(239, 68, 68, 0.15)'
+                                    : 'rgba(245, 158, 11, 0.15)',
+                              border:
+                                status === 'online'
+                                  ? '1px solid rgba(16, 185, 129, 0.35)'
+                                  : status === 'down'
+                                    ? '1px solid rgba(239, 68, 68, 0.35)'
+                                    : '1px solid rgba(245, 158, 11, 0.35)',
+                            }}
+                          >
+                            {status === 'online' ? 'Online' : status === 'down' ? 'Down' : 'Sem dados'}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                          Status: <span style={{ color: theme.colors.text.primary }}>{statusValue?.text ?? '--'}</span>
+                          {lastChange !== null && (
+                            <span style={{ marginLeft: 8 }}>Última mudança: {formatMinutes(lastChange)}</span>
+                          )}
+                        </div>
+
+                        {equipment.observationShow !== false && equipment.observation?.trim() && (
+                          <div
+                            style={{
+                              border: `1px solid ${theme.colors.border.weak}`,
+                              borderRadius: 8,
+                              padding: 8,
+                              background: theme.colors.background.primary,
+                              fontSize: 12,
+                            }}
+                          >
+                            <div
+                              style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}
+                            >
+                              Observação
+                            </div>
+                            <div>{equipment.observation}</div>
+                          </div>
+                        )}
+
+                        {visibleMetrics.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {visibleMetrics.map((metric) => {
                               const value = metric.item ? getMetricValue(metric.item) : undefined;
                               const series = metric.item ? itemSeriesMap.get(metric.item) : undefined;
                               return (
@@ -2388,104 +2035,86 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                                     <span>{value?.text ?? '--'}</span>
                                   </div>
                                   <div style={{ marginTop: 6 }}>
-                                    <Sparkline values={series} width={240} height={60} color={theme.colors.success.main} />
+                                    <Sparkline
+                                      values={series}
+                                      width={240}
+                                      height={60}
+                                      color={theme.colors.success.main}
+                                    />
                                   </div>
                                 </div>
                               );
                             })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      <MapContainer
-        center={center}
-        zoom={zoom}
-        zoomSnap={0.25}
-        zoomDelta={0.25}
-        style={{ height: '100%', width: '100%' }}
-      >
-        <CaptureLeafletView />
-        <CaptureMapInteraction onInteract={() => setLastInteraction(Date.now())} />
-        <CaptureMapRef
-          onReady={(map) => {
-            mapRef.current = map;
-            setCurrentZoom(map.getZoom());
-          }}
-        />
-        <CaptureMapZoom onZoom={setCurrentZoom} />
-        <EnableMiddleMousePan />
-        <EnsureHitboxPane onReady={() => setHitboxReady(true)} />
-        <TileLayer
-          key={options.mapProvider}
-          url={tileConfig.url}
-          subdomains={tileConfig.subdomains}
-          attribution={tileConfig.attribution}
-          maxZoom={20}
-          crossOrigin
-        />
-        {filteredRoutes.map((route) => {
-          if (route.points.length <= 1) {
-            return null;
-          }
-          const status = computeRouteStatus(route);
-          const statusColor =
-            status === 'online' ? route.colors.online : status === 'down' ? route.colors.down : route.colors.alert;
-          const statusClass = status === 'online' ? 'jmap-route--online' : status === 'down' ? 'jmap-route--down' : 'jmap-route--alert';
-          const modeClass =
-            status === 'down'
-              ? transportLineAnimation === 'pulse'
-                ? 'jmap-route--mode-pulse'
-                : ''
-              : transportLineAnimation === 'pulse'
-              ? 'jmap-route--mode-pulse'
-              : transportLineAnimation === 'static'
-              ? 'jmap-route--mode-static'
-              : 'jmap-route--mode-flow';
-          const dashArray =
-            transportLineAnimation === 'pulse'
-              ? undefined
-              : transportLineAnimation === 'static' && status !== 'down'
-              ? undefined
-              : status === 'online'
-              ? '14 10'
-              : status === 'down'
-              ? '6 8'
-              : '8 10';
-          const speed = status === 'online' ? 2 : status === 'down' ? 3.5 : 1.5;
-          const dashOffset = transportLineAnimation === 'flow' ? -(dashTick * speed) % 240 : 0;
-          return (
-            <React.Fragment key={route.id}>
-              <Polyline
-                positions={route.points.map((p) => [p.lat, p.lng])}
-                pathOptions={{
-                  color: statusColor,
-                  className: `jmap-route ${statusClass} ${modeClass}`.trim(),
-                  dashArray,
-                  dashOffset: dashOffset ? `${dashOffset}` : undefined,
-                  weight: 4,
-                }}
-                eventHandlers={{
-                  click: () => {
-                    setSelectedPopId(null);
-                    setSelectedRouteId(route.id);
-                  },
-                }}
-              />
-              {hitboxReady && (
+        <MapContainer
+          center={center}
+          zoom={zoom}
+          zoomSnap={0.25}
+          zoomDelta={0.25}
+          style={{ height: '100%', width: '100%' }}
+          className="jmap-map-container"
+        >
+          <CaptureLeafletView />
+          <CaptureMapInteraction onInteract={() => {}} />
+          <CaptureMapRef
+            onReady={(map) => {
+              mapRef.current = map;
+              setCurrentZoom(map.getZoom());
+            }}
+          />
+          <CaptureMapZoom onZoom={setCurrentZoom} />
+          <EnableMiddleMousePan />
+          <EnsureHitboxPane onReady={() => setHitboxReady(true)} />
+          <TileLayer
+            key={options.mapProvider}
+            url={tileConfig.url}
+            subdomains={tileConfig.subdomains}
+            attribution={tileConfig.attribution}
+            maxZoom={20}
+            crossOrigin
+          />
+          {routes.map((route) => {
+            if (route.points.length <= 1) {
+              return null;
+            }
+            const status = computeRouteStatus(route);
+            const statusColor =
+              status === 'online' ? route.colors.online : status === 'down' ? route.colors.down : route.colors.alert;
+            const statusClass =
+              status === 'online' ? 'jmap-route--online' : status === 'down' ? 'jmap-route--down' : 'jmap-route--alert';
+            const modeClass = transportLineAnimation === 'static' ? 'jmap-route--mode-static' : 'jmap-route--mode-flow';
+            const dashArray =
+              transportLineAnimation === 'static' && status !== 'down'
+                ? undefined
+                : status === 'online'
+                  ? '14 10'
+                  : status === 'down'
+                    ? '6 8'
+                    : '8 10';
+            const speed = status === 'online' ? 2 : status === 'down' ? 3.5 : 1.5;
+            const dashOffset = transportLineAnimation === 'flow' ? -(dashTick * speed) % 240 : 0;
+            return (
+              <React.Fragment key={route.id}>
                 <Polyline
                   positions={route.points.map((p) => [p.lat, p.lng])}
-                  pane="hitboxPane"
                   pathOptions={{
-                    color: 'transparent',
-                    opacity: 0,
-                    weight: 18,
+                    color: statusColor,
+                    className: `jmap-route ${statusClass} ${modeClass}`.trim(),
+                    dashArray,
+                    dashOffset: dashOffset ? `${dashOffset}` : undefined,
+                    weight: transportLineWeight,
+                    lineCap: 'round',
+                    lineJoin: 'round',
                   }}
                   eventHandlers={{
                     click: () => {
@@ -2494,109 +2123,236 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                     },
                   }}
                 />
-              )}
-            </React.Fragment>
-          );
-        })}
-        {filteredPops.map((pop) => {
-          const iconUrl = normalizePopIconUrl(pop.iconUrl);
-          const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
-          const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
-          const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
-          const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
-          const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
-          const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
-          const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
-          const tooltipOffsetY = -(Math.round(iconSizePx / 2) + Math.max(8, Math.round(iconSizePx * 0.4)));
-          const tooltipFontSize = Math.max(9, Math.min(18, Math.round(11 * Math.sqrt(iconZoomScale))));
-          const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
-          const coverageRadiusMeters = Math.max(0, pop.coverageRadiusMeters ?? 0);
-          const coverageColor = pop.coverageColor || '#2563eb';
-          const coverageOpacity = Math.min(1, Math.max(0, pop.coverageOpacity ?? 0.2));
-          const icon = iconUrl
-            ? L.divIcon({
-                className: '',
-                html: `<div class="jmap-pop-icon" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
+                {hitboxReady && (
+                  <Polyline
+                    positions={route.points.map((p) => [p.lat, p.lng])}
+                    pane="hitboxPane"
+                    pathOptions={{
+                      color: 'transparent',
+                      opacity: 0,
+                      weight: 18,
+                    }}
+                    eventHandlers={{
+                      click: () => {
+                        setSelectedPopId(null);
+                        setSelectedRouteId(route.id);
+                      },
+                    }}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
+          {pops.map((pop) => {
+            const iconUrl = normalizePopIconUrl(pop.iconUrl);
+            const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
+            const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
+            const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
+            const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
+            const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
+            const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
+            const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
+            const tooltipOffsetY = -(Math.round(iconSizePx / 2) + Math.max(8, Math.round(iconSizePx * 0.4)));
+            const tooltipFontSize = Math.max(9, Math.min(18, Math.round(11 * Math.sqrt(iconZoomScale))));
+            const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
+            const coverageRadiusMeters = Math.max(0, pop.coverageRadiusMeters ?? 0);
+            const coverageColor = pop.coverageColor || '#2563eb';
+            const coverageOpacity = Math.min(1, Math.max(0, pop.coverageOpacity ?? 0.2));
+            const icon = iconUrl
+              ? L.divIcon({
+                  className: '',
+                  html: `<div class="jmap-pop-icon" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
                   <img class="jmap-pop-icon__img" style="width:${iconInnerSizePx}px;height:${iconInnerSizePx}px;" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
                 </div>`,
-                iconSize: [iconSizePx, iconSizePx],
-                iconAnchor: [iconSizePx / 2, iconSizePx / 2],
-              })
-            : L.divIcon({
-                className: '',
-                html: `<div style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;background:#60a5fa;border:2px solid #1f2937;"></div>`,
-                iconSize: [iconSizePx, iconSizePx],
-                iconAnchor: [iconSizePx / 2, iconSizePx / 2],
-              });
-          return (
-            <React.Fragment key={pop.id}>
-              {coverageRadiusMeters > 0 && (
-                <Circle
-                  center={[pop.lat, pop.lng]}
-                  radius={coverageRadiusMeters}
-                  pathOptions={{
-                    color: coverageColor,
-                    weight: 1,
-                    opacity: Math.min(1, coverageOpacity + 0.25),
-                    fillColor: coverageColor,
-                    fillOpacity: coverageOpacity,
+                  iconSize: [iconSizePx, iconSizePx],
+                  iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+                })
+              : L.divIcon({
+                  className: '',
+                  html: `<div style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;background:#60a5fa;border:2px solid #1f2937;"></div>`,
+                  iconSize: [iconSizePx, iconSizePx],
+                  iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+                });
+            return (
+              <React.Fragment key={pop.id}>
+                {coverageRadiusMeters > 0 && (
+                  <Circle
+                    center={[pop.lat, pop.lng]}
+                    radius={coverageRadiusMeters}
+                    pathOptions={{
+                      color: coverageColor,
+                      weight: 1,
+                      opacity: Math.min(1, coverageOpacity + 0.25),
+                      fillColor: coverageColor,
+                      fillOpacity: coverageOpacity,
+                    }}
+                    interactive={false}
+                  />
+                )}
+                <Marker position={[pop.lat, pop.lng]} icon={icon}>
+                  <Tooltip
+                    className="jmap-tooltip"
+                    direction="top"
+                    permanent
+                    offset={[0, tooltipOffsetY]}
+                    interactive={false}
+                  >
+                    <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
+                  </Tooltip>
+                </Marker>
+                {hitboxReady && (
+                  <CircleMarker
+                    center={[pop.lat, pop.lng]}
+                    radius={hitboxRadius}
+                    pane="hitboxPane"
+                    pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
+                    interactive
+                    bubblingMouseEvents={false}
+                    eventHandlers={{
+                      click: () => {
+                        setSelectedRouteId(null);
+                        setSelectedPopId(pop.id);
+                      },
+                    }}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </MapContainer>
+        {downRoutes.length > 0 &&
+          !selectedRouteId &&
+          (() => {
+            const currentDownRoute = downRoutes[activeDownRouteIndex];
+            if (!currentDownRoute) return null;
+            const isMultiple = downRoutes.length > 1;
+            return (
+              <div
+                className="jmap-autofocus-panel"
+                style={{
+                  position: 'absolute',
+                  left: 20,
+                  bottom: 20,
+                  zIndex: 800,
+                  minWidth: 280,
+                  maxWidth: 340,
+                  padding: '14px 18px',
+                  background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.88) 100%)',
+                  border: '1px solid rgba(239, 68, 68, 0.5)',
+                  borderRadius: 14,
+                  boxShadow: '0 0 30px rgba(239, 68, 68, 0.25), inset 0 0 20px rgba(239, 68, 68, 0.08)',
+                  backdropFilter: 'blur(12px)',
+                  color: '#f1f5f9',
+                  fontFamily: '"Segoe UI", Roboto, "Helvetica Neue", sans-serif',
+                  animation: 'jmap-hologram-fade 0.4s ease-out',
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: -2,
+                    left: 20,
+                    right: 20,
+                    height: 3,
+                    background: 'linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.8), transparent)',
+                    borderRadius: 2,
+                    animation: 'jmap-hologram-scan 2s ease-in-out infinite',
                   }}
-                  interactive={false}
                 />
-              )}
-              <Marker position={[pop.lat, pop.lng]} icon={icon}>
-                <Tooltip
-                  className="jmap-tooltip"
-                  direction="top"
-                  permanent
-                  offset={[0, tooltipOffsetY]}
-                  interactive={false}
+                <div
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
                 >
-                  <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
-                </Tooltip>
-              </Marker>
-              {hitboxReady && (
-                <CircleMarker
-                  center={[pop.lat, pop.lng]}
-                  radius={hitboxRadius}
-                  pane="hitboxPane"
-                  pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
-                  interactive
-                  bubblingMouseEvents={false}
-                  eventHandlers={{
-                    click: () => {
-                      setSelectedRouteId(null);
-                      setSelectedPopId(pop.id);
-                    },
-                  }}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </MapContainer>
-      <button
-        type="button"
-        onClick={() => setStatsCollapsed((prev) => !prev)}
-        aria-label={statsCollapsed ? 'Abrir painel de incidentes' : 'Fechar painel de incidentes'}
-        style={{
-          position: 'absolute',
-          right: theme.spacing(1),
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: theme.colors.background.secondary,
-          border: `1px solid ${theme.colors.border.weak}`,
-          color: theme.colors.text.primary,
-          padding: theme.spacing(0.5),
-          borderRadius: 999,
-          cursor: 'pointer',
-          fontSize: 12,
-          fontWeight: 600,
-          zIndex: 600,
-        }}
-      >
-        {statsCollapsed ? '>' : '<'}
-      </button>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 700,
+                      color: '#fca5a5',
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    {isMultiple ? 'Multiplas Rotas em Falha' : 'Rota em Falha'}
+                  </div>
+                  <div
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: '#ef4444',
+                      boxShadow: '0 0 10px #ef4444',
+                      animation: 'jmap-blink 1s ease-in-out infinite',
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+                  {currentDownRoute.name || 'Sem nome'}
+                </div>
+                {isMultiple && (
+                  <div
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveDownRouteIndex((prev) => (prev - 1 + downRoutes.length) % downRoutes.length)
+                      }
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        borderRadius: 6,
+                        padding: '4px 12px',
+                        color: '#fca5a5',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      ◀
+                    </button>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                      {activeDownRouteIndex + 1} / {downRoutes.length}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveDownRouteIndex((prev) => (prev + 1) % downRoutes.length)}
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        borderRadius: 6,
+                        padding: '4px 12px',
+                        color: '#fca5a5',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      ▶
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        <button
+          type="button"
+          onClick={() => setStatsCollapsed((prev) => !prev)}
+          aria-label={statsCollapsed ? 'Abrir painel de incidentes' : 'Fechar painel de incidentes'}
+          style={{
+            position: 'absolute',
+            right: theme.spacing(1),
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: theme.colors.background.secondary,
+            border: `1px solid ${theme.colors.border.weak}`,
+            color: theme.colors.text.primary,
+            padding: theme.spacing(0.5),
+            borderRadius: 999,
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+            zIndex: 600,
+          }}
+        >
+          {statsCollapsed ? '>' : '<'}
+        </button>
       </div>
 
       <div
@@ -2717,8 +2473,8 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
               )}
               {visibleRouteIncidents.map((item) => {
                 const route = routeById.get(item.id);
-                const downloadText = route ? getRouteMetricValue(route, 'download')?.text ?? '--' : '--';
-                const uploadText = route ? getRouteMetricValue(route, 'upload')?.text ?? '--' : '--';
+                const downloadText = route ? getRouteMetricBits(route, 'download') : '--';
+                const uploadText = route ? getRouteMetricBits(route, 'upload') : '--';
                 return (
                   <button
                     key={item.id}

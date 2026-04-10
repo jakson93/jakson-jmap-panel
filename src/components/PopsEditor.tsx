@@ -400,47 +400,6 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                   </div>
                 </Stack>
               </div>
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 12 }}>Raio de atendimento</div>
-                <Stack direction="row" gap={2} alignItems="flex-end">
-                  <Field label="Raio (metros)">
-                    <Input
-                      type="number"
-                      min={0}
-                      step={10}
-                      value={draftPop.coverageRadiusMeters ?? 0}
-                      onChange={(e) =>
-                        this.updateDraft({ coverageRadiusMeters: Math.max(0, Number(e.currentTarget.value) || 0) })
-                      }
-                    />
-                  </Field>
-                  <Field label="Cor">
-                    <Input
-                      type="color"
-                      value={draftPop.coverageColor ?? '#2563eb'}
-                      onChange={(e) => this.updateDraft({ coverageColor: e.currentTarget.value })}
-                    />
-                  </Field>
-                  <Field label="Opacidade">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={draftPop.coverageOpacity ?? 0.2}
-                      onChange={(e) => {
-                        const next = Number(e.currentTarget.value);
-                        this.updateDraft({
-                          coverageOpacity: Math.min(1, Math.max(0, Number.isFinite(next) ? next : 0)),
-                        });
-                      }}
-                    />
-                  </Field>
-                </Stack>
-                <div style={{ fontSize: 12 }}>
-                  Defina `0` para nao exibir o raio. Cor e opacidade controlam a area desenhada no mapa.
-                </div>
-              </div>
               <Field
                 label="URL do icone"
                 description="Opcional. Informe a URL de uma imagem para usar como icone do POP"
@@ -451,10 +410,7 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                   onChange={(e) => this.updateDraft({ iconUrl: e.currentTarget.value })}
                 />
               </Field>
-              <Field
-                label="Tamanho do icone (px)"
-                description="Define o tamanho base do icone"
-              >
+              <Field label="Tamanho do icone (px)" description="Define o tamanho base do icone">
                 <div style={{ display: 'grid', gap: 8 }}>
                   <input
                     type="range"
@@ -633,114 +589,6 @@ export class PopsEditor extends React.PureComponent<Props, State> {
             </Field>
 
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Dashboard do equipamento</div>
-              <div style={{ display: 'grid', gap: 10 }}>
-                {[
-                  {
-                    label: 'CPU',
-                    item: newEquipment.cpuItem,
-                    show: newEquipment.cpuShow,
-                    itemKey: 'cpuItem',
-                    showKey: 'cpuShow',
-                  },
-                  {
-                    label: 'Memoria',
-                    item: newEquipment.memoryItem,
-                    show: newEquipment.memoryShow,
-                    itemKey: 'memoryItem',
-                    showKey: 'memoryShow',
-                  },
-                  {
-                    label: 'Temperatura',
-                    item: newEquipment.temperatureItem,
-                    show: newEquipment.temperatureShow,
-                    itemKey: 'temperatureItem',
-                    showKey: 'temperatureShow',
-                  },
-                  {
-                    label: 'Uptime',
-                    item: newEquipment.uptimeItem,
-                    show: newEquipment.uptimeShow,
-                    itemKey: 'uptimeItem',
-                    showKey: 'uptimeShow',
-                  },
-                ].map((entry) => (
-                  <div
-                    key={entry.label}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'minmax(240px, 1fr) 110px',
-                      gap: 10,
-                      alignItems: 'end',
-                      padding: 10,
-                      borderRadius: 8,
-                      border: '1px solid rgba(148, 163, 184, 0.35)',
-                      background: 'rgba(15, 23, 42, 0.4)',
-                    }}
-                  >
-                    <Field label={entry.label}>
-                      <Select
-                        options={zabbixItemOptions}
-                        value={getSelectValue(entry.item, zabbixItemOptions)}
-                        allowCustomValue
-                        isClearable
-                        placeholder={`Item ${entry.label}`}
-                        onChange={(option) =>
-                          this.updateNewEquipment({
-                            [entry.itemKey]: option?.value ?? '',
-                          } as Partial<PopEquipment>)
-                        }
-                        onCreateOption={(value) =>
-                          this.updateNewEquipment({
-                            [entry.itemKey]: value,
-                          } as Partial<PopEquipment>)
-                        }
-                      />
-                    </Field>
-                    <div>
-                      <div style={{ fontSize: 12, marginBottom: 6 }}>Exibir</div>
-                      <InlineSwitch
-                        value={entry.show ?? true}
-                        onChange={(e) =>
-                          this.updateNewEquipment({
-                            [entry.showKey]: e.currentTarget.checked,
-                          } as Partial<PopEquipment>)
-                        }
-                      />
-                    </div>
-                  </div>
-                ))}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(240px, 1fr) 110px',
-                    gap: 10,
-                    alignItems: 'end',
-                    padding: 10,
-                    borderRadius: 8,
-                    border: '1px solid rgba(148, 163, 184, 0.35)',
-                    background: 'rgba(15, 23, 42, 0.4)',
-                  }}
-                >
-                  <Field label="Observacao">
-                    <Input
-                      value={newEquipment.observation ?? ''}
-                      placeholder="Ex: Equipamento com ventilacao manual"
-                      onChange={(e) => this.updateNewEquipment({ observation: e.currentTarget.value })}
-                    />
-                  </Field>
-                  <div>
-                    <div style={{ fontSize: 12, marginBottom: 6 }}>Exibir</div>
-                    <InlineSwitch
-                      value={newEquipment.observationShow ?? true}
-                      onChange={(e) => this.updateNewEquipment({ observationShow: e.currentTarget.checked })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Metricas adicionais</div>
               {newEquipment.metrics.length === 0 ? (
                 <div style={{ fontSize: 12, marginBottom: 8 }}>Nenhuma metrica adicional configurada</div>
@@ -756,9 +604,7 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                       <Input
                         placeholder="Descricao"
                         value={metric.description ?? ''}
-                        onChange={(e) =>
-                          this.updateEquipmentMetric(metric.id, { description: e.currentTarget.value })
-                        }
+                        onChange={(e) => this.updateEquipmentMetric(metric.id, { description: e.currentTarget.value })}
                       />
                       <Select
                         options={zabbixItemOptions}
@@ -792,9 +638,7 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                 <Button variant="secondary" onClick={this.cancelEditEquipment}>
                   Cancelar
                 </Button>
-                <Button onClick={this.addEquipment}>
-                  {this.state.editingEquipmentId ? 'Salvar' : 'Adicionar'}
-                </Button>
+                <Button onClick={this.addEquipment}>{this.state.editingEquipmentId ? 'Salvar' : 'Adicionar'}</Button>
               </Stack>
             </div>
           </div>

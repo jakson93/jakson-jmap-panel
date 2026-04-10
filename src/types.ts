@@ -78,7 +78,7 @@ export type Route = {
   distanceKm?: number;
   interfaceItem?: string;
   onlineValue?: string;
-  capacityItem?: string;
+  capacityManualText?: string;
   metrics: RouteMetric[];
   extraMetrics: RouteExtraMetric[];
   trunks: TransportTrunk[];
@@ -134,7 +134,9 @@ export interface PanelOptions {
   centerLng: number;
   zoom: number;
   mapProvider: MapProvider;
-  transportLineAnimation?: 'flow' | 'pulse' | 'static';
+  transportLineAnimation?: 'flow' | 'static';
+  transportLineWeight?: number;
+  transportAnimationSpeed?: number;
   routes: Route[];
   captureNow?: boolean;
   pops: Pop[];

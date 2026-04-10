@@ -99,11 +99,36 @@ export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions
     settings: {
       options: [
         { label: 'Fluxo direcional', value: 'flow' },
-        { label: 'Pulso continuo', value: 'pulse' },
         { label: 'Linha estatica', value: 'static' },
       ],
     },
     defaultValue: 'flow',
+  });
+
+  builder.addNumberInput({
+    path: 'transportLineWeight',
+    name: 'Espessura da linha',
+    description: 'Espessura das linhas de transporte (1-10)',
+    category: ['Configuracao de Mapa'],
+    settings: {
+      min: 1,
+      max: 10,
+      step: 1,
+    },
+    defaultValue: 4,
+  });
+
+  builder.addNumberInput({
+    path: 'transportAnimationSpeed',
+    name: 'Velocidade da animacao',
+    description: 'Velocidade da animacao das linhas (1-10, menor = mais rapido)',
+    category: ['Configuracao de Mapa'],
+    settings: {
+      min: 1,
+      max: 10,
+      step: 1,
+    },
+    defaultValue: 5,
   });
 
   return builder;

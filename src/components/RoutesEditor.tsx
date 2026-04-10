@@ -1,6 +1,6 @@
 import React from 'react';
 import { DataFrame, FieldType, SelectableValue, StandardEditorProps } from '@grafana/data';
-import { Button, Field, InlineSwitch, Input, Modal, Select, Stack } from '@grafana/ui';
+import { Button, Field, Input, Modal, Select, Stack } from '@grafana/ui';
 
 import {
   Route,
@@ -32,7 +32,7 @@ const createEmptyRoute = (): Route => ({
   distanceKm: undefined,
   interfaceItem: '',
   onlineValue: '1',
-  capacityItem: '',
+  capacityManualText: '',
   metrics: DEFAULT_METRICS.map((m) => ({ ...m })),
   extraMetrics: [],
   trunks: [],
@@ -52,13 +52,14 @@ const cloneRoute = (route: Route): Route => ({
   ...route,
   metrics: route.metrics.filter((m) => ALLOWED_METRIC_IDS.has(m.id)).map((m) => ({ ...m })),
   extraMetrics: route.extraMetrics.map((m) => ({ ...m })),
-  trunks: route.trunks?.map((trunk) => ({
-    ...trunk,
-    interfaces: trunk.interfaces.map((iface) => ({
-      ...iface,
-      metrics: iface.metrics?.map((metric) => ({ ...metric })) ?? [],
-    })),
-  })) ?? [],
+  trunks:
+    route.trunks?.map((trunk) => ({
+      ...trunk,
+      interfaces: trunk.interfaces.map((iface) => ({
+        ...iface,
+        metrics: iface.metrics?.map((metric) => ({ ...metric })) ?? [],
+      })),
+    })) ?? [],
   thresholds: { ...route.thresholds },
   colors: { ...route.colors },
   points: route.points.map((p) => ({ ...p })),
@@ -706,15 +707,11 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
                 />
               </Field>
 
-              <Field label="Capacidade total (item Zabbix)" description="Item com a capacidade total do enlace">
-                <Select
-                  options={zabbixItemOptions}
-                  value={getSelectValue(draftRoute.capacityItem, zabbixItemOptions)}
-                  allowCustomValue
-                  isClearable
-                  placeholder="Selecione um item"
-                  onChange={(option) => this.updateDraft({ capacityItem: option?.value ?? '' })}
-                  onCreateOption={(value) => this.updateDraft({ capacityItem: value })}
+              <Field label="Capacidade Total">
+                <Input
+                  value={draftRoute.capacityManualText ?? ''}
+                  placeholder="Ex: 20 GB, 1 Gbps, 1000 Mbps"
+                  onChange={(e) => this.updateDraft({ capacityManualText: e.currentTarget.value })}
                 />
               </Field>
 
@@ -736,27 +733,29 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
           >
             <div style={{ fontWeight: 600, marginBottom: 8 }}>Metricas monitoradas</div>
             <Stack direction="column" gap={1}>
-              {draftRoute.metrics.filter((metric) => ALLOWED_METRIC_IDS.has(metric.id)).map((metric) => (
-                <Stack key={metric.id} direction="column" gap={1}>
-                  <Stack direction="row" gap={2} alignItems="center">
-                    <Stack direction="column" gap={0}>
-                      <div>{metric.label}</div>
-                      {metric.description && <div style={{ fontSize: 12 }}>{metric.description}</div>}
+              {draftRoute.metrics
+                .filter((metric) => ALLOWED_METRIC_IDS.has(metric.id))
+                .map((metric) => (
+                  <Stack key={metric.id} direction="column" gap={1}>
+                    <Stack direction="row" gap={2} alignItems="center">
+                      <Stack direction="column" gap={0}>
+                        <div>{metric.label}</div>
+                        {metric.description && <div style={{ fontSize: 12 }}>{metric.description}</div>}
+                      </Stack>
                     </Stack>
+                    <Field label="Item Zabbix" description="Selecione o item do Zabbix">
+                      <Select
+                        options={zabbixItemOptions}
+                        value={getSelectValue(metric.zabbixItem, zabbixItemOptions)}
+                        allowCustomValue
+                        isClearable
+                        placeholder="Selecione um item"
+                        onChange={(option) => this.updateMetricItem(metric.id, option?.value ?? '')}
+                        onCreateOption={(value) => this.updateMetricItem(metric.id, value)}
+                      />
+                    </Field>
                   </Stack>
-                  <Field label="Item Zabbix" description="Selecione o item do Zabbix">
-                    <Select
-                      options={zabbixItemOptions}
-                      value={getSelectValue(metric.zabbixItem, zabbixItemOptions)}
-                      allowCustomValue
-                      isClearable
-                      placeholder="Selecione um item"
-                      onChange={(option) => this.updateMetricItem(metric.id, option?.value ?? '')}
-                      onCreateOption={(value) => this.updateMetricItem(metric.id, value)}
-                    />
-                  </Field>
-                </Stack>
-              ))}
+                ))}
             </Stack>
           </div>
 
@@ -813,11 +812,7 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
                                   { label: 'Ponta D', value: 'D' },
                                   { label: 'Ponta E', value: 'E' },
                                 ]}
-                                value={
-                                  iface.side
-                                    ? { label: `Ponta ${iface.side}`, value: iface.side }
-                                    : null
-                                }
+                                value={iface.side ? { label: `Ponta ${iface.side}`, value: iface.side } : null}
                                 onChange={(option) =>
                                   this.updateInterface(trunk.id, iface.id, {
                                     side: option?.value as 'A' | 'B' | 'C' | 'D' | 'E',
@@ -866,7 +861,6 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
                                 />
                               </Field>
                             </Stack>
-
                           </Stack>
                         ))}
                       </Stack>
@@ -900,7 +894,9 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
                 <Input
                   type="color"
                   value={draftRoute.colors.online}
-                  onChange={(e) => this.updateDraft({ colors: { ...draftRoute.colors, online: e.currentTarget.value } })}
+                  onChange={(e) =>
+                    this.updateDraft({ colors: { ...draftRoute.colors, online: e.currentTarget.value } })
+                  }
                   style={{ width: '100%', height: 42 }}
                 />
               </Field>
@@ -923,122 +919,11 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
             </div>
           </div>
 
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 8,
-              border: '1px solid rgba(148, 163, 184, 0.35)',
-              background: 'rgba(15, 23, 42, 0.4)',
-            }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Alertas inteligentes</div>
-            <Stack direction="column" gap={2}>
-              <Stack direction="row" gap={2} alignItems="center">
-                <InlineSwitch
-                  value={draftRoute.thresholds?.enabled ?? true}
-                  onChange={(e) =>
-                    this.updateDraft({
-                      thresholds: { ...draftRoute.thresholds, enabled: e.currentTarget.checked },
-                    })
-                  }
-                />
-                <span>Ativar alertas por limiar</span>
-              </Stack>
-              <Stack direction="row" gap={2}>
-                <Field label="RX minimo (dBm)">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={draftRoute.thresholds?.rxLow ?? ''}
-                    placeholder="Ex: -20"
-                    onChange={(e) =>
-                      this.updateDraft({
-                        thresholds: {
-                          ...draftRoute.thresholds,
-                          rxLow: e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="TX minimo (dBm)">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={draftRoute.thresholds?.txLow ?? ''}
-                    placeholder="Ex: -5"
-                    onChange={(e) =>
-                      this.updateDraft({
-                        thresholds: {
-                          ...draftRoute.thresholds,
-                          txLow: e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Uso de banda max (Mbps)">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={draftRoute.thresholds?.bandwidthHigh ?? ''}
-                    placeholder="Ex: 900"
-                    onChange={(e) =>
-                      this.updateDraft({
-                        thresholds: {
-                          ...draftRoute.thresholds,
-                          bandwidthHigh: e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-              </Stack>
-              <Stack direction="row" gap={2}>
-                <Field label="Flapping: janela (min)">
-                  <Input
-                    type="number"
-                    step="1"
-                    value={draftRoute.thresholds?.flappingWindowMin ?? ''}
-                    placeholder="Ex: 15"
-                    onChange={(e) =>
-                      this.updateDraft({
-                        thresholds: {
-                          ...draftRoute.thresholds,
-                          flappingWindowMin:
-                            e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Flapping: mudancas">
-                  <Input
-                    type="number"
-                    step="1"
-                    value={draftRoute.thresholds?.flappingCount ?? ''}
-                    placeholder="Ex: 3"
-                    onChange={(e) =>
-                      this.updateDraft({
-                        thresholds: {
-                          ...draftRoute.thresholds,
-                          flappingCount: e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-              </Stack>
-            </Stack>
-          </div>
-
           <Modal.ButtonRow>
             <Button variant="secondary" onClick={this.closeRouteModal}>
               Cancelar
             </Button>
-            <Button onClick={this.saveRoute}>
-              Salvar rota
-            </Button>
+            <Button onClick={this.saveRoute}>Salvar rota</Button>
           </Modal.ButtonRow>
         </Stack>
       </Modal>
