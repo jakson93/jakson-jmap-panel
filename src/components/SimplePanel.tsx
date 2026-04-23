@@ -6,6 +6,8 @@ import { MapView } from './MapView';
 
 type Props = PanelProps<PanelOptions>;
 
-export const SimplePanel: React.FC<Props> = ({ options, onOptionsChange, data, timeZone }) => {
-  return <MapView options={options} onOptionsChange={onOptionsChange} data={data} timeZone={timeZone} />;
+export const SimplePanel: React.FC<Props> = ({ options, onOptionsChange, data, timeZone, timeRange }) => {
+  return (
+    <MapView options={options} onOptionsChange={onOptionsChange} data={data} timeZone={timeZone} timeRange={timeRange} />
+  );
 };

@@ -1,6 +1,6 @@
 import React from 'react';
 import L from 'leaflet';
-import { DataFrame, Field, FieldType, PanelData, TimeZone, getDisplayProcessor } from '@grafana/data';
+import { DataFrame, Field, FieldType, PanelData, TimeRange, TimeZone, getDisplayProcessor } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
 import {
   Circle,
@@ -22,6 +22,7 @@ type Props = {
   options: PanelOptions;
   onOptionsChange: (options: PanelOptions) => void;
   data: PanelData;
+  timeRange: TimeRange;
   timeZone?: TimeZone;
 };
 
@@ -379,14 +380,6 @@ const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) 
   );
 };
 
-type HistoryWindow = {
-  label: string;
-  days: number;
-  min: number | null;
-  max: number | null;
-  avg: number | null;
-};
-
 type SignalTrendChartProps = {
   series?: { values: number[]; times: number[] };
   width: number;
@@ -397,39 +390,7 @@ type SignalTrendChartProps = {
 const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProps) => {
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
 
-  const getSeriesTimeUnit = (latestTime: number) => (latestTime < 1_000_000_000_000 ? 's' : 'ms');
-
-  const computeTrend = (seriesData?: {
-    values: number[];
-    times: number[];
-  }): { current: number | null; days15: number | null; days30: number | null } => {
-    if (!seriesData || seriesData.values.length === 0) {
-      return { current: null, days15: null, days30: null };
-    }
-    const latestTime = seriesData.times[seriesData.times.length - 1];
-    const current = seriesData.values[seriesData.values.length - 1];
-    const unitMultiplier = getSeriesTimeUnit(latestTime) === 's' ? 1 : 1000;
-
-    const computeAvg = (days: number) => {
-      const windowStart = latestTime - days * 24 * 60 * 60 * unitMultiplier;
-      const values: number[] = [];
-      for (let i = 0; i < seriesData.values.length; i++) {
-        if (seriesData.times[i] >= windowStart) {
-          values.push(seriesData.values[i]);
-        }
-      }
-      if (values.length === 0) return null;
-      return values.reduce((acc, v) => acc + v, 0) / values.length;
-    };
-
-    return {
-      current,
-      days15: computeAvg(15),
-      days30: computeAvg(30),
-    };
-  };
-
-  const trend = computeTrend(series);
+  const normalizeTime = (value: number) => (value < 1_000_000_000_000 ? value * 1000 : value);
 
   const marginLeft = 50;
   const marginBottom = 24;
@@ -437,9 +398,9 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
   const plotWidth = Math.max(1, width - marginLeft - 6);
   const plotHeight = Math.max(1, height - marginBottom - marginTop);
 
-  const values: (number | null)[] = [trend.days30, trend.days15, trend.current];
-  const labels = ['30 dias', '15 dias', 'Atual'];
-  const validValues = values.filter((v): v is number => v !== null);
+  const values = series?.values ?? [];
+  const times = (series?.times ?? []).map(normalizeTime);
+  const validValues = values.filter((v): v is number => Number.isFinite(v));
 
   if (validValues.length === 0) {
     return <div style={{ fontSize: 12 }}>Sem dados</div>;
@@ -448,13 +409,14 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
   const min = Math.min(...validValues);
   const max = Math.max(...validValues);
   const range = max - min || 1;
+  const minTime = times[0] ?? 0;
+  const maxTime = times[times.length - 1] ?? minTime;
+  const timeRange = maxTime - minTime || 1;
 
   const getY = (value: number) => marginTop + plotHeight - ((value - min) / range) * plotHeight;
-  const getX = (idx: number) => marginLeft + (idx / (values.length - 1)) * plotWidth;
+  const getX = (time: number) => marginLeft + ((time - minTime) / timeRange) * plotWidth;
 
-  const points = values
-    .map((v, i) => (v !== null ? { x: getX(i), y: getY(v), idx: i } : null))
-    .filter((p): p is { x: number; y: number; idx: number } => p !== null);
+  const points = values.map((value, idx) => ({ x: getX(times[idx] ?? minTime), y: getY(value), idx }));
 
   const linePath = points.length >= 2 ? points.map((p) => `${p.x},${p.y}`).join(' ') : '';
 
@@ -463,20 +425,35 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
     const x = e.clientX - rect.left;
     let closestIdx = 0;
     let closestDist = Infinity;
-    for (let i = 0; i < values.length; i++) {
-      const dist = Math.abs(getX(i) - x);
-      if (dist < closestDist && values[i] !== null) {
+    for (let i = 0; i < points.length; i++) {
+      const dist = Math.abs(points[i].x - x);
+      if (dist < closestDist) {
         closestDist = dist;
-        closestIdx = i;
+        closestIdx = points[i].idx;
       }
     }
     setHoverIndex(closestIdx);
   };
 
   const hoveredPoint =
-    hoverIndex !== null && values[hoverIndex] !== null
-      ? { value: values[hoverIndex]!, idx: hoverIndex, x: getX(hoverIndex), y: getY(values[hoverIndex]!) }
+    hoverIndex !== null && values[hoverIndex] !== undefined
+      ? {
+          value: values[hoverIndex],
+          idx: hoverIndex,
+          x: getX(times[hoverIndex] ?? minTime),
+          y: getY(values[hoverIndex]),
+          time: times[hoverIndex] ?? minTime,
+        }
       : null;
+
+  const axisTicks = [minTime, minTime + timeRange / 2, maxTime];
+  const formatTick = (time: number) =>
+    new Date(time).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
 
   return (
     <div style={{ position: 'relative', width, height }}>
@@ -548,24 +525,24 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
             boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           }}
         >
-          <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 2 }}>{labels[hoveredPoint.idx]}</div>
+          <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 2 }}>{formatTick(hoveredPoint.time)}</div>
           <div>{hoveredPoint.value.toFixed(2)}</div>
         </div>
       )}
-      {points.map((p, i) => (
+      {axisTicks.map((tick, i) => (
         <div
           key={i}
           style={{
             position: 'absolute',
-            left: p.x - 28,
+            left: getX(tick) - 40,
             top: height - 20,
-            width: 56,
+            width: 80,
             textAlign: 'center',
             fontSize: 10,
             color: '#94a3b8',
           }}
         >
-          {labels[i]}
+          {formatTick(tick)}
         </div>
       ))}
     </div>
@@ -719,7 +696,7 @@ function CaptureMapZoom({ onZoom }: { onZoom: (zoom: number) => void }) {
   return null;
 }
 
-export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
+export function MapView({ options, onOptionsChange, data, timeRange, timeZone }: Props) {
   const theme = useTheme2();
   const centerLat = Number.isFinite(options.centerLat) ? options.centerLat : DEFAULT_CENTER_LAT;
   const centerLng = Number.isFinite(options.centerLng) ? options.centerLng : DEFAULT_CENTER_LNG;
@@ -1158,46 +1135,31 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
 
   const getSeriesTimeUnit = (latestTime: number) => (latestTime < 1_000_000_000_000 ? 's' : 'ms');
 
-  const buildHistoryWindows = (series?: { values: number[]; times: number[] }): HistoryWindow[] => {
-    if (!series || series.values.length === 0) {
-      return [
-        { label: 'Atual', days: 0, min: null, max: null, avg: null },
-        { label: '15 dias', days: 15, min: null, max: null, avg: null },
-        { label: '30 dias', days: 30, min: null, max: null, avg: null },
-      ];
-    }
-    const latestTime = series.times[series.times.length - 1];
-    const latestValue = series.values[series.values.length - 1];
-    const unitMultiplier = getSeriesTimeUnit(latestTime) === 's' ? 1 : 1000;
+  const filterSeriesByTimeRange = React.useCallback(
+    (series?: { values: number[]; times: number[] }) => {
+      if (!series || series.values.length === 0) {
+        return series;
+      }
 
-    const computeWindow = (days: number) => {
-      const windowStart = latestTime - days * 24 * 60 * 60 * unitMultiplier;
-      const values: number[] = [];
+      const fromMs = timeRange.from.valueOf();
+      const toMs = timeRange.to.valueOf();
+      const isSeconds = getSeriesTimeUnit(series.times[series.times.length - 1]) === 's';
+      const rangeStart = isSeconds ? Math.floor(fromMs / 1000) : fromMs;
+      const rangeEnd = isSeconds ? Math.ceil(toMs / 1000) : toMs;
+      const filtered = { values: [] as number[], times: [] as number[] };
+
       for (let i = 0; i < series.values.length; i++) {
-        if (series.times[i] >= windowStart) {
-          values.push(series.values[i]);
+        const time = series.times[i];
+        if (time >= rangeStart && time <= rangeEnd) {
+          filtered.values.push(series.values[i]);
+          filtered.times.push(time);
         }
       }
-      if (values.length === 0) {
-        return { min: null, max: null, avg: null };
-      }
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const avg = values.reduce((acc, v) => acc + v, 0) / values.length;
-      return { min, max, avg };
-    };
 
-    const lastWindow = computeWindow(15);
-    const monthWindow = computeWindow(30);
-
-    return [
-      { label: 'Atual', days: 0, min: latestValue, max: latestValue, avg: latestValue },
-      { label: '15 dias', days: 15, ...lastWindow },
-      { label: '30 dias', days: 30, ...monthWindow },
-    ];
-  };
-
-  const filterSeriesByDays = (series?: { values: number[]; times: number[] }) => series;
+      return filtered.values.length > 0 ? filtered : series;
+    },
+    [timeRange.from, timeRange.to]
+  );
 
   return (
     <div ref={containerRef} style={{ height: '100%', width: '100%', display: 'flex' }}>
@@ -1810,7 +1772,7 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
               }}
             >
               {(() => {
-                const filteredSeries = filterSeriesByDays(rxHistory.series);
+                const filteredSeries = filterSeriesByTimeRange(rxHistory.series);
                 return (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1840,32 +1802,9 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                         color={theme.colors.success.main}
                       />
                       <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 6 }}>
-                        Tendência: 30 dias, 15 dias e Atual
+                        Periodo do painel: {timeRange.from.format('DD/MM/YYYY HH:mm')} ate{' '}
+                        {timeRange.to.format('DD/MM/YYYY HH:mm')}
                       </div>
-                    </div>
-                    <div
-                      style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}
-                    >
-                      {buildHistoryWindows(filteredSeries).map((entry) => (
-                        <div
-                          key={entry.label}
-                          style={{
-                            border: `1px solid ${theme.colors.border.weak}`,
-                            borderRadius: 10,
-                            padding: 10,
-                            background: theme.colors.background.secondary,
-                          }}
-                        >
-                          <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
-                            {entry.label}
-                          </div>
-                          <div style={{ fontSize: 12, marginTop: 6 }}>
-                            Min: {entry.min !== null ? entry.min.toFixed(2) : '--'}
-                          </div>
-                          <div style={{ fontSize: 12 }}>Max: {entry.max !== null ? entry.max.toFixed(2) : '--'}</div>
-                          <div style={{ fontSize: 12 }}>Med: {entry.avg !== null ? entry.avg.toFixed(2) : '--'}</div>
-                        </div>
-                      ))}
                     </div>
                   </>
                 );
