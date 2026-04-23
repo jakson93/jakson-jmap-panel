@@ -43,9 +43,6 @@ name: '',
   iconSizePx: 32,
   iconScaleMode: 'fixed',
   showName: true,
-  coverageRadiusMeters: 0,
-  coverageColor: '#2563eb',
-  coverageOpacity: 0.2,
   equipments: [],
 });
 
@@ -374,7 +371,6 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                 <div style={{ fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
                 <div style={{ fontSize: 12 }}>
                   {pop.equipments.length} equipamento(s)
-                  {(pop.coverageRadiusMeters ?? 0) > 0 ? ` • raio ${pop.coverageRadiusMeters} m` : ''}
                   {(pop.iconSizePx ?? 32) !== 32 ? ` • icone ${pop.iconSizePx ?? 32}px` : ''}
                   {pop.iconScaleMode === 'fixed' ? ' • fixo' : ' • dinamico'}
                   {pop.showName === false ? ' • sem nome' : ''}

@@ -1,5 +1,6 @@
 import React from 'react';
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 
 type Point = { lat: number; lng: number };
 
@@ -24,9 +25,22 @@ function ClickCapture({ onAddPoint }: { onAddPoint: (point: Point) => void }) {
   return null;
 }
 
+function PreventModalDismiss() {
+  const map = useMap();
+
+  React.useEffect(() => {
+    const container = map.getContainer();
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+  }, [map]);
+
+  return null;
+}
+
 export function RouteDrawMap({ center, zoom, points, existingRoutes, pops, onAddPoint }: Props) {
   return (
     <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+      <PreventModalDismiss />
       <ClickCapture onAddPoint={onAddPoint} />
       <TileLayer url={DEFAULT_TILE_URL} />
       {(existingRoutes ?? []).map((routePoints, idx) => (

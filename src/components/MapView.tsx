@@ -3,7 +3,6 @@ import L from 'leaflet';
 import { DataFrame, Field, FieldType, PanelData, TimeRange, TimeZone, getDisplayProcessor } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
 import {
-  Circle,
   CircleMarker,
   MapContainer,
   Marker,
@@ -406,8 +405,9 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
     return <div style={{ fontSize: 12 }}>Sem dados</div>;
   }
 
-  const min = Math.min(...validValues);
-  const max = Math.max(...validValues);
+  const currentValue = validValues[validValues.length - 1];
+  const min = currentValue - 2;
+  const max = currentValue + 2;
   const range = max - min || 1;
   const minTime = times[0] ?? 0;
   const maxTime = times[times.length - 1] ?? minTime;
@@ -1095,6 +1095,22 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     [getRouteMetricNumeric, itemSeriesTimeMap, itemValueMap]
   );
 
+  const computePopStatus = React.useCallback(
+    (pop: (typeof pops)[number]) => {
+      const statusItems = (pop.equipments ?? []).filter((equipment) => equipment.statusItem?.trim());
+      if (statusItems.length === 0) {
+        return 'online';
+      }
+
+      return statusItems.some(
+        (equipment) => resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap) === 'down'
+      )
+        ? 'down'
+        : 'online';
+    },
+    [itemValueMap]
+  );
+
   const selectedRouteStatus = selectedRoute ? computeRouteStatus(selectedRoute) : 'unknown';
   const selectedRouteStatusLabel =
     selectedRouteStatus === 'online'
@@ -1343,11 +1359,21 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             display: flex;
             align-items: center;
             justify-content: center;
+            background: transparent;
+            border: none;
+            box-shadow: none;
           }
           .jmap-pop-icon__img {
             width: 28px;
             height: 28px;
             object-fit: contain;
+          }
+          .jmap-pop-icon--down {
+            background: rgba(15, 23, 42, 0.9);
+            border: 2px solid rgba(239, 68, 68, 0.95);
+            border-color: rgba(239, 68, 68, 0.95);
+            box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 0 18px rgba(239, 68, 68, 0.4);
+            animation: jmap-pop-down-pulse 1.3s ease-in-out infinite;
           }
           .jmap-pop-icon--fallback::before {
             content: 'POP';
@@ -1355,6 +1381,10 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             font-weight: 700;
             color: #e2e8f0;
             letter-spacing: 0.3px;
+          }
+          @keyframes jmap-pop-down-pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 0 12px rgba(239, 68, 68, 0.28); }
+            50% { transform: scale(1.08); box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9), 0 0 22px rgba(239, 68, 68, 0.6); }
           }
           .jmap-fiber-line {
             animation: jmap-fiber-flow 1.2s linear infinite;
@@ -2177,6 +2207,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             );
           })}
           {pops.map((pop) => {
+            const popStatus = computePopStatus(pop);
             const iconUrl = normalizePopIconUrl(pop.iconUrl);
             const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
             const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
@@ -2188,40 +2219,24 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             const tooltipOffsetY = -(Math.round(iconSizePx / 2) + Math.max(8, Math.round(iconSizePx * 0.4)));
             const tooltipFontSize = Math.max(9, Math.min(18, Math.round(11 * Math.sqrt(iconZoomScale))));
             const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
-            const coverageRadiusMeters = Math.max(0, pop.coverageRadiusMeters ?? 0);
-            const coverageColor = pop.coverageColor || '#2563eb';
-            const coverageOpacity = Math.min(1, Math.max(0, pop.coverageOpacity ?? 0.2));
+            const statusClass = popStatus === 'down' ? 'jmap-pop-icon--down' : '';
             const icon = iconUrl
               ? L.divIcon({
                   className: '',
-                  html: `<div class="jmap-pop-icon" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
+                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
                   <img class="jmap-pop-icon__img" style="width:${iconInnerSizePx}px;height:${iconInnerSizePx}px;" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
-                </div>`,
+                 </div>`,
                   iconSize: [iconSizePx, iconSizePx],
                   iconAnchor: [iconSizePx / 2, iconSizePx / 2],
                 })
               : L.divIcon({
                   className: '',
-                  html: `<div style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;background:#60a5fa;border:2px solid #1f2937;"></div>`,
+                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;"></div>`,
                   iconSize: [iconSizePx, iconSizePx],
                   iconAnchor: [iconSizePx / 2, iconSizePx / 2],
                 });
             return (
               <React.Fragment key={pop.id}>
-                {coverageRadiusMeters > 0 && (
-                  <Circle
-                    center={[pop.lat, pop.lng]}
-                    radius={coverageRadiusMeters}
-                    pathOptions={{
-                      color: coverageColor,
-                      weight: 1,
-                      opacity: Math.min(1, coverageOpacity + 0.25),
-                      fillColor: coverageColor,
-                      fillOpacity: coverageOpacity,
-                    }}
-                    interactive={false}
-                  />
-                )}
                 {pop.showName !== false && (
                   <Marker position={[pop.lat, pop.lng]} icon={icon}>
                     <Tooltip
