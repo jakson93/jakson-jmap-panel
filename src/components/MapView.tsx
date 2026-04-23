@@ -392,7 +392,7 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
 
   const normalizeTime = (value: number) => (value < 1_000_000_000_000 ? value * 1000 : value);
 
-  const marginLeft = 50;
+  const marginLeft = 72;
   const marginBottom = 24;
   const marginTop = 20;
   const plotWidth = Math.max(1, width - marginLeft - 6);
@@ -416,20 +416,72 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
   const getY = (value: number) => marginTop + plotHeight - ((value - min) / range) * plotHeight;
   const getX = (time: number) => marginLeft + ((time - minTime) / timeRange) * plotWidth;
 
-  const points = values.map((value, idx) => ({ x: getX(times[idx] ?? minTime), y: getY(value), idx }));
+  const rawPoints = values.map((value, idx) => ({
+    x: getX(times[idx] ?? minTime),
+    y: getY(value),
+    idx,
+    time: times[idx] ?? minTime,
+    value,
+  }));
 
-  const linePath = points.length >= 2 ? points.map((p) => `${p.x},${p.y}`).join(' ') : '';
+  const maxVisiblePoints = Math.max(32, Math.floor(plotWidth / 6));
+  const simplifiedPoints =
+    rawPoints.length <= maxVisiblePoints
+      ? rawPoints
+      : (() => {
+          const bucketSize = Math.ceil(rawPoints.length / maxVisiblePoints);
+          const reduced: typeof rawPoints = [];
+
+          for (let start = 0; start < rawPoints.length; start += bucketSize) {
+            const bucket = rawPoints.slice(start, start + bucketSize);
+            if (bucket.length === 0) {
+              continue;
+            }
+
+            const first = bucket[0];
+            const last = bucket[bucket.length - 1];
+            const minPoint = bucket.reduce((acc, point) => (point.value < acc.value ? point : acc), bucket[0]);
+            const maxPoint = bucket.reduce((acc, point) => (point.value > acc.value ? point : acc), bucket[0]);
+
+            [first, minPoint, maxPoint, last]
+              .sort((a, b) => a.idx - b.idx)
+              .forEach((point) => {
+                if (!reduced.some((existing) => existing.idx === point.idx)) {
+                  reduced.push(point);
+                }
+              });
+          }
+
+          return reduced;
+        })();
+
+  const linePath = simplifiedPoints.length >= 2 ? simplifiedPoints.map((p) => `${p.x},${p.y}`).join(' ') : '';
+  const significantThreshold = Math.max(0.15, range * 0.12);
+  const significantPoints = simplifiedPoints.filter((point, index, list) => {
+    if (index === 0 || index === list.length - 1) {
+      return false;
+    }
+
+    const prev = list[index - 1];
+    const next = list[index + 1];
+    const deltaPrev = Math.abs(point.value - prev.value);
+    const deltaNext = Math.abs(point.value - next.value);
+    const isPeak = point.value > prev.value && point.value > next.value;
+    const isTrough = point.value < prev.value && point.value < next.value;
+
+    return (isPeak || isTrough) && Math.max(deltaPrev, deltaNext) >= significantThreshold;
+  });
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     let closestIdx = 0;
     let closestDist = Infinity;
-    for (let i = 0; i < points.length; i++) {
-      const dist = Math.abs(points[i].x - x);
+    for (let i = 0; i < simplifiedPoints.length; i++) {
+      const dist = Math.abs(simplifiedPoints[i].x - x);
       if (dist < closestDist) {
         closestDist = dist;
-        closestIdx = points[i].idx;
+        closestIdx = simplifiedPoints[i].idx;
       }
     }
     setHoverIndex(closestIdx);
@@ -446,7 +498,8 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
         }
       : null;
 
-  const axisTicks = [minTime, minTime + timeRange / 2, maxTime];
+  const axisTicks = Array.from({ length: 5 }, (_, idx) => minTime + (timeRange * idx) / 4);
+  const yTicks = Array.from({ length: 5 }, (_, idx) => max - (range * idx) / 4);
   const formatTick = (time: number) =>
     new Date(time).toLocaleString('pt-BR', {
       day: '2-digit',
@@ -465,16 +518,34 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHoverIndex(null)}
       >
+        {yTicks.map((tick, index) => {
+          const y = getY(tick);
+          return (
+            <g key={`y-${index}`}>
+              <line
+                x1={marginLeft}
+                y1={y}
+                x2={width - 6}
+                y2={y}
+                stroke="rgba(148,163,184,0.12)"
+                strokeWidth={1}
+              />
+              <text x={marginLeft - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
+                {tick.toFixed(2)} dBm
+              </text>
+            </g>
+          );
+        })}
         {linePath && (
           <>
             <polyline
               points={linePath}
               fill="none"
               stroke={color}
-              strokeWidth={2.5}
+              strokeWidth={1.6}
               strokeLinecap="round"
               strokeLinejoin="round"
-              opacity={0.8}
+              opacity={0.72}
             />
             <line
               x1={marginLeft}
@@ -494,17 +565,39 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
             />
           </>
         )}
-        {points.map((p, i) => (
+        {significantPoints.map((point) => (
           <circle
-            key={i}
-            cx={p.x}
-            cy={p.y}
-            r={hoverIndex === p.idx ? 8 : 6}
+            key={`sig-${point.idx}`}
+            cx={point.x}
+            cy={point.y}
+            r={3.2}
             fill={color}
-            stroke="#0f172a"
-            strokeWidth={2}
+            fillOpacity={0.95}
+            stroke="rgba(15, 23, 42, 0.9)"
+            strokeWidth={1.5}
           />
         ))}
+        {hoveredPoint && (
+          <>
+            <line
+              x1={hoveredPoint.x}
+              y1={marginTop}
+              x2={hoveredPoint.x}
+              y2={height - marginBottom}
+              stroke="rgba(250, 204, 21, 0.35)"
+              strokeWidth={1}
+              strokeDasharray="4 4"
+            />
+            <circle
+              cx={hoveredPoint.x}
+              cy={hoveredPoint.y}
+              r={5}
+              fill={color}
+              stroke="#0f172a"
+              strokeWidth={2}
+            />
+          </>
+        )}
       </svg>
       {hoveredPoint && (
         <div
@@ -527,6 +620,9 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
         >
           <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 2 }}>{formatTick(hoveredPoint.time)}</div>
           <div>{hoveredPoint.value.toFixed(2)}</div>
+          {significantPoints.some((point) => point.idx === hoveredPoint.idx) && (
+            <div style={{ color: '#facc15', fontSize: 9, marginTop: 2 }}>Oscilacao relevante</div>
+          )}
         </div>
       )}
       {axisTicks.map((tick, i) => (
