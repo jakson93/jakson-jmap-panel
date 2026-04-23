@@ -4,6 +4,9 @@ import { Button, Field, InlineSwitch, Input, Modal, Select, Stack } from '@grafa
 
 import { Pop, PopEquipment, PopMetric } from '../types';
 import datacenterIcon from '../img/datacenter.png';
+import oltIcon from '../img/olt.png';
+import swIcon from '../img/sw.png';
+import torreIcon from '../img/torre.png';
 import { PopSelectMap } from './PopSelectMap';
 
 const POP_ICON_PRESETS = [
@@ -12,16 +15,34 @@ const POP_ICON_PRESETS = [
     label: 'Datacenter',
     url: datacenterIcon,
   },
+  {
+    id: 'olt',
+    label: 'OLT',
+    url: oltIcon,
+  },
+  {
+    id: 'sw',
+    label: 'SW',
+    url: swIcon,
+  },
+  {
+    id: 'torre',
+    label: 'Torre',
+    url: torreIcon,
+  },
 ];
+
+const PLUGIN_PUBLIC_PATH = '/public/plugins/jakson-jmap-panel/';
 
 const createEmptyPop = (lat: number, lng: number): Pop => ({
   id: `pop-${Date.now()}`,
-  name: '',
+name: '',
   lat,
   lng,
   iconUrl: '',
   iconSizePx: 32,
-  iconScaleMode: 'map',
+  iconScaleMode: 'fixed',
+  showName: true,
   coverageRadiusMeters: 0,
   coverageColor: '#2563eb',
   coverageOpacity: 0.2,
@@ -42,6 +63,7 @@ type State = {
   isPopModalOpen: boolean;
   isMapModalOpen: boolean;
   editingIndex: number | null;
+  draggingIndex: number | null;
   draftPop: Pop;
   newEquipment: PopEquipment;
   editingEquipmentId: string | null;
@@ -112,11 +134,29 @@ const getSelectValue = (
   return options.find((option) => option.value === value || option.label === value) ?? { label: value, value };
 };
 
+const normalizePopIconUrl = (value?: string) => {
+  const raw = value?.trim() ?? '';
+  if (!raw) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:') || raw.startsWith('/')) {
+    return raw;
+  }
+  if (raw.startsWith('public/plugins/')) {
+    return `/${raw}`;
+  }
+  if (raw.startsWith('public/')) {
+    return `/${raw}`;
+  }
+  return `${PLUGIN_PUBLIC_PATH}${raw.replace(/^\.\//, '')}`;
+};
+
 export class PopsEditor extends React.PureComponent<Props, State> {
   state: State = {
     isPopModalOpen: false,
     isMapModalOpen: false,
     editingIndex: null,
+    draggingIndex: null,
     draftPop: createEmptyPop(-23.5505, -46.6333),
     newEquipment: createEmptyEquipment(),
     editingEquipmentId: null,
@@ -182,6 +222,28 @@ export class PopsEditor extends React.PureComponent<Props, State> {
     }
     const nextPops = this.pops.filter((_, i) => i !== index);
     this.updatePops(nextPops);
+  };
+
+  onDragStart = (index: number) => {
+    this.setState({ draggingIndex: index });
+  };
+
+  onDragOver = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    const { draggingIndex } = this.state;
+    if (draggingIndex === null || draggingIndex === targetIndex) {
+      return;
+    }
+
+    const newPops = [...this.pops];
+    const [draggedItem] = newPops.splice(draggingIndex, 1);
+    newPops.splice(targetIndex, 0, draggedItem);
+    this.updatePops(newPops);
+    this.setState({ draggingIndex: targetIndex });
+  };
+
+  onDragEnd = () => {
+    this.setState({ draggingIndex: null });
   };
 
   updateDraft = (partial: Partial<Pop>) => {
@@ -287,28 +349,47 @@ export class PopsEditor extends React.PureComponent<Props, State> {
   };
 
   renderPopList() {
+    const { draggingIndex } = this.state;
     return (
       <Stack direction="column" gap={1}>
         {this.pops.map((pop, idx) => (
-          <Stack key={pop.id} direction="row" gap={2} alignItems="center" justifyContent="space-between">
-            <Stack direction="column" gap={0}>
-              <div style={{ fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
-              <div style={{ fontSize: 12 }}>
-                {pop.equipments.length} equipamento(s)
-                {(pop.coverageRadiusMeters ?? 0) > 0 ? ` • raio ${pop.coverageRadiusMeters} m` : ''}
-                {(pop.iconSizePx ?? 32) !== 32 ? ` • icone ${pop.iconSizePx ?? 32}px` : ''}
-                {pop.iconScaleMode === 'fixed' ? ' • fixo' : ' • dinamico'}
-              </div>
+          <div
+            key={pop.id}
+            draggable
+            onDragStart={() => this.onDragStart(idx)}
+            onDragOver={(e) => this.onDragOver(e, idx)}
+            onDragEnd={this.onDragEnd}
+            style={{
+              cursor: 'grab',
+              padding: '8px 12px',
+              borderRadius: 6,
+              border: draggingIndex === idx ? '2px solid #3b82f6' : '1px solid rgba(148,163,184,0.2)',
+              background: draggingIndex === idx ? 'rgba(59,130,246,0.15)' : 'rgba(31,41,55,0.2)',
+              opacity: draggingIndex === idx ? 0.5 : 1,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Stack direction="row" gap={2} alignItems="center" justifyContent="space-between">
+              <Stack direction="column" gap={0}>
+                <div style={{ fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
+                <div style={{ fontSize: 12 }}>
+                  {pop.equipments.length} equipamento(s)
+                  {(pop.coverageRadiusMeters ?? 0) > 0 ? ` • raio ${pop.coverageRadiusMeters} m` : ''}
+                  {(pop.iconSizePx ?? 32) !== 32 ? ` • icone ${pop.iconSizePx ?? 32}px` : ''}
+                  {pop.iconScaleMode === 'fixed' ? ' • fixo' : ' • dinamico'}
+                  {pop.showName === false ? ' • sem nome' : ''}
+                </div>
+              </Stack>
+              <Stack direction="row" gap={1}>
+                <Button size="sm" onClick={() => this.openEditPop(idx)}>
+                  Editar
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => this.deletePop(idx)}>
+                  Excluir
+                </Button>
+              </Stack>
             </Stack>
-            <Stack direction="row" gap={1}>
-              <Button size="sm" onClick={() => this.openEditPop(idx)}>
-                Editar
-              </Button>
-              <Button size="sm" variant="destructive" onClick={() => this.deletePop(idx)}>
-                Excluir
-              </Button>
-            </Stack>
-          </Stack>
+          </div>
         ))}
       </Stack>
     );
@@ -373,6 +454,12 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                   value={draftPop.name}
                   placeholder="Ex: POP Centro"
                   onChange={(e) => this.updateDraft({ name: e.currentTarget.value })}
+                />
+              </Field>
+              <Field label="Mostrar nome no mapa">
+                <InlineSwitch
+                  value={draftPop.showName ?? true}
+                  onChange={(e) => this.updateDraft({ showName: e.currentTarget.checked })}
                 />
               </Field>
               <div>
@@ -470,12 +557,13 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                     Sem icone
                   </Button>
                   {POP_ICON_PRESETS.map((preset) => {
-                    const selected = draftPop.iconUrl === preset.url;
+                    const presetUrl = normalizePopIconUrl(preset.url);
+                    const selected = normalizePopIconUrl(draftPop.iconUrl) === presetUrl;
                     return (
                       <button
                         key={preset.id}
                         type="button"
-                        onClick={() => this.updateDraft({ iconUrl: preset.url })}
+                        onClick={() => this.updateDraft({ iconUrl: presetUrl })}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -489,7 +577,7 @@ export class PopsEditor extends React.PureComponent<Props, State> {
                         }}
                       >
                         <img
-                          src={preset.url}
+                          src={presetUrl}
                           alt={preset.label}
                           style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'contain' }}
                         />

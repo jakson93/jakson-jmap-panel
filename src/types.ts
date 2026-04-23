@@ -123,6 +123,7 @@ export type Pop = {
   iconUrl?: string;
   iconSizePx?: number;
   iconScaleMode?: 'fixed' | 'map';
+  showName?: boolean;
   coverageRadiusMeters?: number;
   coverageColor?: string;
   coverageOpacity?: number;

@@ -211,6 +211,7 @@ type State = {
   arcEnd: RoutePoint | null;
   arcBend: number;
   arcSide: 'left' | 'right';
+  draggingIndex: number | null;
 };
 
 export class RoutesEditor extends React.PureComponent<Props, State> {
@@ -225,6 +226,7 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
     arcEnd: null,
     arcBend: 0.35,
     arcSide: 'left',
+    draggingIndex: null,
   };
 
   get routes(): Route[] {
@@ -299,6 +301,28 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
     }
     const nextRoutes = this.routes.filter((_, i) => i !== index);
     this.updateRoutes(nextRoutes);
+  };
+
+  onDragStart = (index: number) => {
+    this.setState({ draggingIndex: index });
+  };
+
+  onDragOver = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    const { draggingIndex } = this.state;
+    if (draggingIndex === null || draggingIndex === targetIndex) {
+      return;
+    }
+
+    const newRoutes = [...this.routes];
+    const [draggedItem] = newRoutes.splice(draggingIndex, 1);
+    newRoutes.splice(targetIndex, 0, draggedItem);
+    this.updateRoutes(newRoutes);
+    this.setState({ draggingIndex: targetIndex });
+  };
+
+  onDragEnd = () => {
+    this.setState({ draggingIndex: null });
   };
 
   updateDraft = (partial: Partial<Route>) => {
@@ -598,27 +622,45 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
 
   renderRoutesList() {
     const routes = this.routes;
+    const { draggingIndex } = this.state;
     return (
       <Stack direction="column" gap={1}>
         {routes.map((route, idx) => {
           const distance = route.distanceKm ?? computeDistanceKm(route.points);
           return (
-            <Stack key={route.id} direction="row" gap={2} alignItems="center" justifyContent="space-between">
-              <Stack direction="column" gap={0}>
-                <div style={{ fontWeight: 600 }}>{route.name || 'Sem nome'}</div>
-                <div style={{ fontSize: 12 }}>
-                  {route.points.length} pontos • {distance.toFixed(2)} km
-                </div>
+            <div
+              key={route.id}
+              draggable
+              onDragStart={() => this.onDragStart(idx)}
+              onDragOver={(e) => this.onDragOver(e, idx)}
+              onDragEnd={this.onDragEnd}
+              style={{
+                cursor: 'grab',
+                padding: '8px 12px',
+                borderRadius: 6,
+                border: draggingIndex === idx ? '2px solid #3b82f6' : '1px solid rgba(148,163,184,0.2)',
+                background: draggingIndex === idx ? 'rgba(59,130,246,0.15)' : 'rgba(31,41,55,0.2)',
+                opacity: draggingIndex === idx ? 0.5 : 1,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <Stack direction="row" gap={2} alignItems="center" justifyContent="space-between">
+                <Stack direction="column" gap={0}>
+                  <div style={{ fontWeight: 600 }}>{route.name || 'Sem nome'}</div>
+                  <div style={{ fontSize: 12 }}>
+                    {route.points.length} pontos • {distance.toFixed(2)} km
+                  </div>
+                </Stack>
+                <Stack direction="row" gap={1}>
+                  <Button size="sm" onClick={() => this.openEditRoute(idx)}>
+                    Editar
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => this.deleteRoute(idx)}>
+                    Excluir
+                  </Button>
+                </Stack>
               </Stack>
-              <Stack direction="row" gap={1}>
-                <Button size="sm" onClick={() => this.openEditRoute(idx)}>
-                  Editar
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => this.deleteRoute(idx)}>
-                  Excluir
-                </Button>
-              </Stack>
-            </Stack>
+            </div>
           );
         })}
       </Stack>

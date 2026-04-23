@@ -1285,8 +1285,6 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(15, 23, 42, 0.85);
-            border: 1px solid rgba(148, 163, 184, 0.35);
           }
           .jmap-pop-icon__img {
             width: 28px;
@@ -2189,17 +2187,22 @@ export function MapView({ options, onOptionsChange, data, timeZone }: Props) {
                     interactive={false}
                   />
                 )}
-                <Marker position={[pop.lat, pop.lng]} icon={icon}>
-                  <Tooltip
-                    className="jmap-tooltip"
-                    direction="top"
-                    permanent
-                    offset={[0, tooltipOffsetY]}
-                    interactive={false}
-                  >
-                    <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
-                  </Tooltip>
-                </Marker>
+                {pop.showName !== false && (
+                  <Marker position={[pop.lat, pop.lng]} icon={icon}>
+                    <Tooltip
+                      className="jmap-tooltip"
+                      direction="top"
+                      permanent
+                      offset={[0, tooltipOffsetY]}
+                      interactive={false}
+                    >
+                      <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
+                    </Tooltip>
+                  </Marker>
+                )}
+                {pop.showName === false && (
+                  <Marker position={[pop.lat, pop.lng]} icon={icon} />
+                )}
                 {hitboxReady && (
                   <CircleMarker
                     center={[pop.lat, pop.lng]}
