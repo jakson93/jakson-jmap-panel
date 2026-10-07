@@ -1661,6 +1661,42 @@ export function MapView({
                   paddingRight: 4,
                 }}
               >
+                <div className={presentation.metricGrid}>
+                  {[
+                    ...selectedRoute.metrics
+                      .filter((metric) => metric.enabled && metric.zabbixItem)
+                      .map((metric) => ({ id: `route-${metric.id}`, name: metric.label, item: metric.zabbixItem })),
+                    ...selectedRoute.extraMetrics
+                      .filter((metric) => metric.showInDetails !== false && metric.item)
+                      .map((metric) => ({ ...metric, id: `extra-${metric.id}` })),
+                    ...selectedRoute.trunks.flatMap((trunk) =>
+                      trunk.interfaces.flatMap((iface) =>
+                        iface.metrics
+                          .filter((metric) => metric.item)
+                          .map((metric) => ({
+                            id: JSON.stringify([trunk.id, iface.id, metric.id]),
+                            name: `${trunk.name} / ${iface.name} · ${metric.label}`,
+                            item: metric.item,
+                          }))
+                      )
+                    ),
+                  ].map((metric) => (
+                    <div key={metric.id} className={presentation.metricCard}>
+                      <div className={presentation.metricHeading}>
+                        <span>{metric.name || 'Métrica'}</span>
+                        <span className={presentation.metricValue}>{getMetricValue(metric.item)?.text ?? '--'}</span>
+                      </div>
+                      <div className={presentation.trend}>
+                        <Sparkline
+                          values={metric.item ? itemSeriesMap.get(metric.item) : undefined}
+                          width={240}
+                          height={parseFloat(theme.spacing(3))}
+                          color={theme.colors.primary.text}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <div
                   style={{
                     border: `1px solid ${theme.colors.border.weak}`,

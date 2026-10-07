@@ -2,6 +2,8 @@
 
 ## 1.2.0 (Homologação — 2026-10-07)
 
+- Exibe métricas de rota habilitadas, métricas extras e métricas das interfaces no card completo, junto dos trunks e histórico RX.
+
 - Agrupa a topologia por POP, com expansão individual, inventário completo e indicação de links internos.
 - Mantém as extremidades reais de equipamentos ao recolher os grupos; curvas e traçados ortogonais são apenas apresentação.
 - Oferece organização dos grupos em rascunho e move equipamentos junto com seu POP, com desfazer/cancelar.

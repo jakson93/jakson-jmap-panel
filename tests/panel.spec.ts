@@ -82,3 +82,21 @@ test('automatic group arrangement can be undone and cancelled without changing r
   await panel.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await expect(panel.getByLabel('Resumo da rede').getByText('Rotas', { exact: true })).toBeVisible();
 });
+
+test('route details display custom metrics alongside trunks and RX history', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: 'Listar equipamentos e rotas', exact: true }).click();
+  await panel.getByRole('button', { name: 'POP Centro → POP Norte Em alerta', exact: true }).click();
+  await panel.getByRole('button', { name: 'Detalhes completos', exact: true }).click();
+  const details = panel.getByRole('dialog', { name: 'Detalhes da rota', exact: true });
+  await expect(details.getByText('Latência', { exact: true })).toBeVisible();
+  await expect(details.getByText('Sinais em tempo real (TX/RX)', { exact: true })).toBeVisible();
+  await details.getByRole('button', { name: /Interface A · Centro/ }).click();
+  await expect(panel.getByRole('dialog', { name: 'Histórico do sinal RX', exact: true })).toBeVisible();
+});

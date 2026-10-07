@@ -227,7 +227,7 @@ export function NetworkCanvas(props: Props) {
         maxZoom={view === 'map' ? 20 : 2}
         zoomControl={false}
         doubleClickZoom={false}
-        className={`${styles.map} ${view === 'topology' ? styles.topology : options.mapTone !== 'original' ? styles.muted : ''}`}
+        className={`${styles.map} ${view === 'topology' ? styles.topology : options.mapTone !== 'original' && !['google_satellite', 'google_hybrid', 'carto_dark'].includes(options.mapProvider) ? styles.muted : ''}`}
       >
         <MapLifecycle
           view={view}
