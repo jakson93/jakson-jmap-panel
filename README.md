@@ -2,6 +2,14 @@
 
 Plugin de mapa para monitoramento de POPs e rotas de transporte em Grafana.
 
+## Versão de teste 1.1.0 — mapa original e topologia
+
+A visualização original continua disponível, com aparência refinada dentro do mapa. A alternativa **Topologia** permite posicionar equipamentos, puxar ligações e ajustar caminhos em modo de edição, com desfazer, refazer e cancelar. Após **Aplicar alterações**, salve o dashboard no Grafana.
+
+Use a branch `codex/mapa-topologia` em homologação. O original está preservado em `backup/original-2026-10-07` (commit `743a103`). O diretório `dist` inclui o plugin compilado e seus ícones.
+
+Veja o [passo a passo para testar, instalar e reverter](docs/TESTAR-E-REVERTER.md), incluindo um Grafana separado via `compose.homolog.yaml` e um dashboard com dados demonstrativos.
+
 ## Instalar no Grafana (Linux)
 
 Este é um plugin **não assinado**, então o Grafana precisa permitir plugins não assinados.

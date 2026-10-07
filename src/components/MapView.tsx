@@ -1,17 +1,10 @@
 import React from 'react';
 import L from 'leaflet';
-import { DataFrame, Field, FieldType, PanelData, TimeRange, TimeZone, getDisplayProcessor } from '@grafana/data';
-import { useTheme2 } from '@grafana/ui';
-import {
-  CircleMarker,
-  MapContainer,
-  Marker,
-  Polyline,
-  TileLayer,
-  Tooltip,
-  useMap,
-  useMapEvents,
-} from 'react-leaflet';
+import { DataFrame, FieldType, PanelData, TimeRange, TimeZone } from '@grafana/data';
+import { useTheme2, useStyles2, Icon } from '@grafana/ui';
+import { mapPresentation } from './mapPresentation';
+import { readTelemetry } from '../networkTelemetry';
+import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { PanelOptions } from '../types';
@@ -23,6 +16,9 @@ type Props = {
   data: PanelData;
   timeRange: TimeRange;
   timeZone?: TimeZone;
+  initialRouteId?: string;
+  initialPopId?: string;
+  tools?: React.ReactNode;
 };
 
 const DEFAULT_CENTER_LAT = -23.5505;
@@ -52,16 +48,6 @@ const distanceKm = (points: Array<{ lat: number; lng: number }>): number => {
   return total;
 };
 
-const getLastFieldValue = (field: Field) => {
-  for (let i = field.values.length - 1; i >= 0; i--) {
-    const value = field.values.get(i);
-    if (value !== null && value !== undefined) {
-      return value;
-    }
-  }
-  return undefined;
-};
-
 type ItemValue = {
   text: string;
   raw: unknown;
@@ -72,44 +58,7 @@ type SeriesWithTime = {
   times: number[];
 };
 
-const buildItemValueMap = (series: DataFrame[], theme: ReturnType<typeof useTheme2>, timeZone?: TimeZone) => {
-  const values = new Map<string, ItemValue>();
-
-  const addValue = (label?: string, displayText?: string, raw?: unknown) => {
-    const key = label?.trim();
-    if (!key || !displayText || values.has(key)) {
-      return;
-    }
-    values.set(key, { text: displayText, raw });
-  };
-
-  series.forEach((frame) => {
-    if (!frame.fields?.length) {
-      return;
-    }
-    const valueField =
-      frame.fields.find((field) => field.type === FieldType.number) ??
-      frame.fields.find((field) => field.type !== FieldType.time);
-    if (!valueField) {
-      return;
-    }
-
-    const lastValue = getLastFieldValue(valueField);
-    if (lastValue === undefined) {
-      return;
-    }
-
-    const display = getDisplayProcessor({ field: valueField, theme, timeZone })(lastValue);
-    const displayText = display.text ?? String(lastValue);
-
-    addValue(frame.name, displayText, lastValue);
-    addValue(valueField.name, displayText, lastValue);
-    addValue(valueField.config?.displayNameFromDS, displayText, lastValue);
-    addValue(valueField.config?.displayName, displayText, lastValue);
-  });
-
-  return values;
-};
+const buildItemValueMap = readTelemetry;
 
 const toNumber = (value: unknown): number | null => {
   if (value === null || value === undefined) {
@@ -209,8 +158,8 @@ const buildItemSeriesWithTimeMap = (series: DataFrame[]) => {
       const count = Math.min(field.values.length, timeField.values.length);
       const seriesValues: SeriesWithTime = { values: [], times: [] };
       for (let i = 0; i < count; i++) {
-        const rawValue = toNumber(field.values.get(i));
-        const rawTime = Number(timeField.values.get(i));
+        const rawValue = toNumber(field.values[i]);
+        const rawTime = Number(timeField.values[i]);
         if (rawValue === null || !Number.isFinite(rawTime)) {
           continue;
         }
@@ -358,8 +307,9 @@ type SparklineProps = {
 };
 
 const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) => {
+  const theme = useTheme2();
   if (!values || values.length < 2) {
-    return <div style={{ fontSize: 11, color: 'inherit' }}>--</div>;
+    return <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: 'inherit' }}>--</div>;
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -367,13 +317,18 @@ const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) 
   const points = values
     .map((value, index) => {
       const x = (index / (values.length - 1)) * width;
-      const y = height - ((value - min) / range) * height;
+      const y = max === min ? height / 2 : height - ((value - min) / range) * height;
       return `${x},${y}`;
     })
     .join(' ');
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block' }}>
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ display: 'block', maxWidth: '100%' }}
+    >
       <polyline points={points} fill="none" stroke={color} strokeWidth={2} />
     </svg>
   );
@@ -387,6 +342,7 @@ type SignalTrendChartProps = {
 };
 
 const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProps) => {
+  const theme = useTheme2();
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
 
   const normalizeTime = (value: number) => (value < 1_000_000_000_000 ? value * 1000 : value);
@@ -522,14 +478,7 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
           const y = getY(tick);
           return (
             <g key={`y-${index}`}>
-              <line
-                x1={marginLeft}
-                y1={y}
-                x2={width - 6}
-                y2={y}
-                stroke="rgba(148,163,184,0.12)"
-                strokeWidth={1}
-              />
+              <line x1={marginLeft} y1={y} x2={width - 6} y2={y} stroke="rgba(148,163,184,0.12)" strokeWidth={1} />
               <text x={marginLeft - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
                 {tick.toFixed(2)} dBm
               </text>
@@ -588,14 +537,7 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
               strokeWidth={1}
               strokeDasharray="4 4"
             />
-            <circle
-              cx={hoveredPoint.x}
-              cy={hoveredPoint.y}
-              r={5}
-              fill={color}
-              stroke="#0f172a"
-              strokeWidth={2}
-            />
+            <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r={5} fill={color} stroke="#0f172a" strokeWidth={2} />
           </>
         )}
       </svg>
@@ -611,7 +553,7 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
             borderRadius: 8,
             padding: '8px 12px',
             color: '#e2e8f0',
-            fontSize: 11,
+            fontSize: theme.typography.bodySmall.fontSize,
             fontWeight: 600,
             whiteSpace: 'nowrap',
             zIndex: 10,
@@ -634,7 +576,7 @@ const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProp
             top: height - 20,
             width: 80,
             textAlign: 'center',
-            fontSize: 10,
+            fontSize: theme.typography.bodySmall.fontSize,
             color: '#94a3b8',
           }}
         >
@@ -792,8 +734,18 @@ function CaptureMapZoom({ onZoom }: { onZoom: (zoom: number) => void }) {
   return null;
 }
 
-export function MapView({ options, onOptionsChange, data, timeRange, timeZone }: Props) {
+export function MapView({
+  options,
+  onOptionsChange,
+  data,
+  timeRange,
+  timeZone,
+  initialRouteId,
+  initialPopId,
+  tools,
+}: Props) {
   const theme = useTheme2();
+  const presentation = useStyles2(mapPresentation);
   const centerLat = Number.isFinite(options.centerLat) ? options.centerLat : DEFAULT_CENTER_LAT;
   const centerLng = Number.isFinite(options.centerLng) ? options.centerLng : DEFAULT_CENTER_LNG;
   const zoom = Number.isFinite(options.zoom) ? options.zoom : DEFAULT_ZOOM;
@@ -803,8 +755,8 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   const center: [number, number] = [centerLat, centerLng];
   const mapRef = React.useRef<L.Map | null>(null);
   const fullscreenRef = React.useRef(false);
-  const [selectedRouteId, setSelectedRouteId] = React.useState<string | null>(null);
-  const [selectedPopId, setSelectedPopId] = React.useState<string | null>(null);
+  const [selectedRouteId, setSelectedRouteId] = React.useState<string | null>(initialRouteId ?? null);
+  const [selectedPopId, setSelectedPopId] = React.useState<string | null>(initialPopId ?? null);
   const [selectedLinkSide, setSelectedLinkSide] = React.useState<string | null>(null);
   const [rxHistory, setRxHistory] = React.useState<{
     name: string;
@@ -823,7 +775,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   const linkCenterRef = React.useRef<HTMLDivElement | null>(null);
   const [linkLayout, setLinkLayout] = React.useState({ leftX: 0, rightX: 0, top: 0, height: 0, leftListTop: 0 });
   const mapZoomScale = Math.pow(2, currentZoom - zoom);
-  const dataSeries = data?.series ?? [];
+  const dataSeries = React.useMemo(() => data?.series ?? [], [data?.series]);
 
   React.useEffect(() => {
     const handler = () => {
@@ -953,8 +905,8 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     onOptionsChange({ ...options, captureNow: false });
   }, [onOptionsChange, options]);
 
-  const routes = options.routes ?? [];
-  const pops = options.pops ?? [];
+  const routes = React.useMemo(() => options.routes ?? [], [options.routes]);
+  const pops = React.useMemo(() => options.pops ?? [], [options.pops]);
 
   const focusRoute = (routeId: string) => {
     const route = routes.find((r) => r.id === routeId);
@@ -967,17 +919,21 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     }
   };
 
-  const selectedRoute = selectedRouteId ? (routes.find((route) => route.id === selectedRouteId) ?? null) : null;
+  const selectedRoute = React.useMemo(
+    () => (selectedRouteId ? (routes.find((route) => route.id === selectedRouteId) ?? null) : null),
+    [routes, selectedRouteId]
+  );
   const selectedPop = selectedPopId ? (pops.find((pop) => pop.id === selectedPopId) ?? null) : null;
   const selectedRouteDistance = selectedRoute ? distanceKm(selectedRoute.points) : 0;
   const routeById = React.useMemo(() => new Map(routes.map((route) => [route.id, route] as const)), [routes]);
   const activeItemKeys = React.useMemo(() => {
     const keys = collectMapItemKeys(routes);
+    pops.forEach((pop) => pop.equipments.forEach((equipment) => addItemKey(keys, equipment.statusItem)));
     if (selectedRoute || selectedPop || rxHistory) {
       collectDetailItemKeys(selectedRoute, selectedPop).forEach((key) => keys.add(key));
     }
     return keys;
-  }, [routes, rxHistory, selectedPop, selectedRoute]);
+  }, [routes, pops, rxHistory, selectedPop, selectedRoute]);
   const activeSeries = React.useMemo(
     () => filterSeriesByItems(dataSeries, activeItemKeys),
     [activeItemKeys, dataSeries]
@@ -989,7 +945,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   const itemSeriesMap = React.useMemo(() => buildItemSeriesMap(activeSeries), [activeSeries]);
   const itemSeriesTimeMap = React.useMemo(() => buildItemSeriesWithTimeMap(activeSeries), [activeSeries]);
 
-  const formatBitsPerSec = (value: number | null | undefined): string => {
+  const formatBitsPerSec = React.useCallback((value: number | null | undefined): string => {
     if (value === null || value === undefined || !Number.isFinite(value)) {
       return '--';
     }
@@ -1001,7 +957,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
       unitIndex++;
     }
     return `${v.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
-  };
+  }, []);
 
   const getMetricValue = React.useCallback(
     (item?: string) => (item ? itemValueMap.get(item) : undefined),
@@ -1099,14 +1055,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     (pop: (typeof pops)[number]) => {
       const statusItems = (pop.equipments ?? []).filter((equipment) => equipment.statusItem?.trim());
       if (statusItems.length === 0) {
-        return 'online';
+        return 'unknown';
       }
 
-      return statusItems.some(
-        (equipment) => resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap) === 'down'
-      )
-        ? 'down'
-        : 'online';
+      const statuses = statusItems.map((equipment) =>
+        resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap)
+      );
+      return statuses.includes('down') ? 'down' : statuses.includes('unknown') ? 'unknown' : 'online';
     },
     [itemValueMap]
   );
@@ -1274,8 +1229,14 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   );
 
   return (
-    <div ref={containerRef} style={{ height: '100%', width: '100%', display: 'flex' }}>
+    <div
+      ref={containerRef}
+      className={presentation.root}
+      data-testid="jmap-original-map"
+      style={{ height: '100%', width: '100%', display: 'flex' }}
+    >
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+        {tools && <div className={presentation.tools}>{tools}</div>}
         <style>
           {`
           .jmap-popup .leaflet-popup-content-wrapper,
@@ -1458,11 +1419,14 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             fontSize: 16,
           }}
         >
-          ⛶
+          <Icon name="expand-arrows" />
         </button>
 
         {selectedRoute && (
           <div
+            className={presentation.backdrop}
+            role="dialog"
+            aria-label="Detalhes da rota"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1492,7 +1456,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedRoute.name || 'Sem nome'}</div>
-                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                  <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
                     Distancia total: {selectedRouteDistance.toFixed(2)} km
                   </div>
                 </div>
@@ -1520,7 +1484,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     background: theme.colors.background.secondary,
                   }}
                 >
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                  <div
+                    style={{
+                      fontSize: theme.typography.bodySmall.fontSize,
+                      textTransform: 'uppercase',
+                      color: theme.colors.text.secondary,
+                    }}
+                  >
                     Status
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
@@ -1529,7 +1499,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         display: 'inline-block',
                         padding: '4px 10px',
                         borderRadius: 999,
-                        fontSize: 11,
+                        fontSize: theme.typography.bodySmall.fontSize,
                         fontWeight: 700,
                         background:
                           selectedRouteStatus === 'online'
@@ -1560,7 +1530,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     >
                       <div
                         style={{
-                          fontSize: 10,
+                          fontSize: theme.typography.bodySmall.fontSize,
                           color: '#fca5a5',
                           fontWeight: 600,
                           textTransform: 'uppercase',
@@ -1572,7 +1542,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                       <div style={{ fontSize: 18, fontWeight: 700, color: '#f87171' }}>
                         {formatMinutes(selectedRouteDownTime)}
                       </div>
-                      <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 4 }}>
+                      <div
+                        style={{
+                          fontSize: theme.typography.bodySmall.fontSize,
+                          color: theme.colors.text.secondary,
+                          marginTop: 4,
+                        }}
+                      >
                         {selectedRouteDownTime < 60
                           ? 'Menos de 1 hora'
                           : selectedRouteDownTime < 1440
@@ -1590,7 +1566,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     background: theme.colors.background.secondary,
                   }}
                 >
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                  <div
+                    style={{
+                      fontSize: theme.typography.bodySmall.fontSize,
+                      textTransform: 'uppercase',
+                      color: theme.colors.text.secondary,
+                    }}
+                  >
                     Capacidade total
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
@@ -1655,7 +1637,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2' }}>
                           <div style={{ fontSize: 12, fontWeight: 600 }}>{leftTrunk.name || 'Cidade 1'}</div>
                           {leftTrunk.description ? (
-                            <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 }}>
+                            <div
+                              style={{
+                                fontSize: theme.typography.bodySmall.fontSize,
+                                color: theme.colors.text.secondary,
+                                marginTop: 2,
+                              }}
+                            >
                               {leftTrunk.description}
                             </div>
                           ) : null}
@@ -1724,7 +1712,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                               {rightTrunk.description ? (
                                 <div
                                   style={{
-                                    fontSize: 11,
+                                    fontSize: theme.typography.bodySmall.fontSize,
                                     color: theme.colors.text.secondary,
                                     marginTop: 2,
                                     textAlign: 'right',
@@ -1927,7 +1915,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         height={180}
                         color={theme.colors.success.main}
                       />
-                      <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 6 }}>
+                      <div
+                        style={{
+                          fontSize: theme.typography.bodySmall.fontSize,
+                          color: theme.colors.text.secondary,
+                          marginTop: 6,
+                        }}
+                      >
                         Periodo do painel: {timeRange.from.format('DD/MM/YYYY HH:mm')} ate{' '}
                         {timeRange.to.format('DD/MM/YYYY HH:mm')}
                       </div>
@@ -1941,6 +1935,9 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
 
         {selectedPop && (
           <div
+            className={presentation.backdrop}
+            role="dialog"
+            aria-label="Equipamentos do POP"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1970,7 +1967,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedPop.name || 'Sem nome'}</div>
-                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                  <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
                     {selectedPop.lat.toFixed(4)}, {selectedPop.lng.toFixed(4)}
                   </div>
                 </div>
@@ -1997,8 +1994,31 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     const statusValue = equipment.statusItem ? getMetricValue(equipment.statusItem) : undefined;
                     const status = resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap);
                     const lastChange = getLastChangeMinutes(equipment.statusItem, itemSeriesTimeMap);
-                    const visibleMetrics =
-                      equipment.metrics?.filter((metric) => (metric.showInDetails ?? true) && metric.item) ?? [];
+                    const customMetrics = equipment.metrics ?? [];
+                    const builtInMetrics = [
+                      { id: 'builtin-cpu', name: 'CPU', item: equipment.cpuItem, showInDetails: equipment.cpuShow },
+                      {
+                        id: 'builtin-memory',
+                        name: 'Memória',
+                        item: equipment.memoryItem,
+                        showInDetails: equipment.memoryShow,
+                      },
+                      {
+                        id: 'builtin-temperature',
+                        name: 'Temperatura',
+                        item: equipment.temperatureItem,
+                        showInDetails: equipment.temperatureShow,
+                      },
+                      {
+                        id: 'builtin-uptime',
+                        name: 'Uptime',
+                        item: equipment.uptimeItem,
+                        showInDetails: equipment.uptimeShow,
+                      },
+                    ].filter((metric) => !customMetrics.some((custom) => custom.item === metric.item));
+                    const visibleMetrics = [...builtInMetrics, ...customMetrics].filter(
+                      (metric) => metric.showInDetails !== false && metric.item
+                    );
 
                     return (
                       <div
@@ -2016,7 +2036,12 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
                             <div style={{ fontSize: 13, fontWeight: 700 }}>{equipment.name || 'Equipamento'}</div>
-                            <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                            <div
+                              style={{
+                                fontSize: theme.typography.bodySmall.fontSize,
+                                color: theme.colors.text.secondary,
+                              }}
+                            >
                               {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
                             </div>
                           </div>
@@ -2025,7 +2050,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                               display: 'inline-block',
                               padding: '4px 10px',
                               borderRadius: 999,
-                              fontSize: 11,
+                              fontSize: theme.typography.bodySmall.fontSize,
                               fontWeight: 700,
                               background:
                                 status === 'online'
@@ -2045,7 +2070,9 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                           </span>
                         </div>
 
-                        <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                        <div
+                          style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}
+                        >
                           Status: <span style={{ color: theme.colors.text.primary }}>{statusValue?.text ?? '--'}</span>
                           {lastChange !== null && (
                             <span style={{ marginLeft: 8 }}>Última mudança: {formatMinutes(lastChange)}</span>
@@ -2063,7 +2090,11 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                             }}
                           >
                             <div
-                              style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}
+                              style={{
+                                fontSize: theme.typography.bodySmall.fontSize,
+                                textTransform: 'uppercase',
+                                color: theme.colors.text.secondary,
+                              }}
                             >
                               Observação
                             </div>
@@ -2072,36 +2103,21 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         )}
 
                         {visibleMetrics.length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div className={presentation.metricGrid}>
                             {visibleMetrics.map((metric) => {
                               const value = metric.item ? getMetricValue(metric.item) : undefined;
                               const series = metric.item ? itemSeriesMap.get(metric.item) : undefined;
                               return (
-                                <div
-                                  key={metric.id}
-                                  style={{
-                                    border: `1px solid ${theme.colors.border.weak}`,
-                                    borderRadius: 8,
-                                    padding: 8,
-                                    background: theme.colors.background.primary,
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      fontSize: 12,
-                                      fontWeight: 600,
-                                    }}
-                                  >
+                                <div key={metric.id} className={presentation.metricCard}>
+                                  <div className={presentation.metricHeading}>
                                     <span>{metric.name || 'Metrica'}</span>
-                                    <span>{value?.text ?? '--'}</span>
+                                    <span className={presentation.metricValue}>{value?.text ?? '--'}</span>
                                   </div>
                                   <div style={{ marginTop: 6 }}>
                                     <Sparkline
                                       values={series}
                                       width={240}
-                                      height={60}
+                                      height={parseFloat(theme.spacing(5))}
                                       color={theme.colors.success.main}
                                     />
                                   </div>
@@ -2208,7 +2224,9 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
           })}
           {pops.map((pop) => {
             const popStatus = computePopStatus(pop);
-            const iconUrl = normalizePopIconUrl(pop.iconUrl);
+            const iconUrl = normalizePopIconUrl(
+              pop.iconUrl || 'public/plugins/jakson-jmap-panel/img/pop-datacenter.svg'
+            );
             const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
             const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
             const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
@@ -2238,7 +2256,18 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             return (
               <React.Fragment key={pop.id}>
                 {pop.showName !== false && (
-                  <Marker position={[pop.lat, pop.lng]} icon={icon}>
+                  <Marker
+                    position={[pop.lat, pop.lng]}
+                    icon={icon}
+                    title={pop.name || 'Sem nome'}
+                    alt={pop.name || 'Sem nome'}
+                    eventHandlers={{
+                      click: () => {
+                        setSelectedRouteId(null);
+                        setSelectedPopId(pop.id);
+                      },
+                    }}
+                  >
                     <Tooltip
                       className="jmap-tooltip"
                       direction="top"
@@ -2247,11 +2276,36 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                       interactive={false}
                     >
                       <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
+                      <div
+                        style={{
+                          color:
+                            popStatus === 'down'
+                              ? theme.colors.error.text
+                              : popStatus === 'online'
+                                ? theme.colors.success.text
+                                : theme.colors.text.secondary,
+                          fontSize: theme.typography.bodySmall.fontSize,
+                        }}
+                      >
+                        {pop.equipments.length} equipamento(s) ·{' '}
+                        {popStatus === 'down' ? 'Indisponível' : popStatus === 'online' ? 'Online' : 'Sem dados'}
+                      </div>
                     </Tooltip>
                   </Marker>
                 )}
                 {pop.showName === false && (
-                  <Marker position={[pop.lat, pop.lng]} icon={icon} />
+                  <Marker
+                    position={[pop.lat, pop.lng]}
+                    icon={icon}
+                    title={pop.name || 'Sem nome'}
+                    alt={pop.name || 'Sem nome'}
+                    eventHandlers={{
+                      click: () => {
+                        setSelectedRouteId(null);
+                        setSelectedPopId(pop.id);
+                      },
+                    }}
+                  />
                 )}
                 {hitboxReady && (
                   <CircleMarker
@@ -2277,7 +2331,9 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
           !selectedRouteId &&
           (() => {
             const currentDownRoute = downRoutes[activeDownRouteIndex];
-            if (!currentDownRoute) return null;
+            if (!currentDownRoute) {
+              return null;
+            }
             const isMultiple = downRoutes.length > 1;
             return (
               <div
@@ -2361,7 +2417,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     >
                       ◀
                     </button>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                    <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: '#94a3b8' }}>
                       {activeDownRouteIndex + 1} / {downRoutes.length}
                     </div>
                     <button
@@ -2446,9 +2502,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               }}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing(0.75) }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>Top 3 piores sinais RX</div>
+              <div style={{ fontSize: theme.typography.bodySmall.fontSize, fontWeight: 600 }}>
+                Top 3 piores sinais RX
+              </div>
               {topRxSignals.length === 0 ? (
-                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Nenhum item RX encontrado.</div>
+                <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
+                  Nenhum item RX encontrado.
+                </div>
               ) : (
                 topRxSignals.map((item) => (
                   <button
@@ -2504,7 +2564,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                       </span>
                       <span
                         style={{
-                          fontSize: 10,
+                          fontSize: theme.typography.bodySmall.fontSize,
                           color: theme.colors.text.secondary,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -2514,15 +2574,19 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         {item.trunkName} • {item.interfaceName}
                       </span>
                     </span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>{item.rxText}</span>
+                    <span style={{ fontSize: theme.typography.bodySmall.fontSize, fontWeight: 700, color: '#f59e0b' }}>
+                      {item.rxText}
+                    </span>
                   </button>
                 ))
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing(1) }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>Todas as rotas</div>
+              <div style={{ fontSize: theme.typography.bodySmall.fontSize, fontWeight: 600 }}>Todas as rotas</div>
               {visibleRouteIncidents.length === 0 && (
-                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Nenhuma rota encontrada.</div>
+                <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
+                  Nenhuma rota encontrada.
+                </div>
               )}
               {visibleRouteIncidents.map((item) => {
                 const route = routeById.get(item.id);
@@ -2585,7 +2649,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         </div>
                         <span
                           style={{
-                            fontSize: 10,
+                            fontSize: theme.typography.bodySmall.fontSize,
                             fontWeight: 700,
                             color: item.statusColor,
                             textTransform: 'uppercase',
@@ -2601,7 +2665,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                           display: 'grid',
                           gridTemplateColumns: '1fr 1fr',
                           gap: theme.spacing(0.75),
-                          fontSize: 10,
+                          fontSize: theme.typography.bodySmall.fontSize,
                           color: theme.colors.text.secondary,
                         }}
                       >

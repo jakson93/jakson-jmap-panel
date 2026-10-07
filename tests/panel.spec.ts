@@ -1,35 +1,43 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
-test('should display "No data" in case panel data is empty', async ({
+test('preserves the original map and switches to equipment topology', async ({
   gotoPanelEditPage,
   readProvisionedDashboard,
 }) => {
-  const dashboard = await readProvisionedDashboard({ fileName: 'dashboard.json' });
-  const panelEditPage = await gotoPanelEditPage({ dashboard, id: '2' });
-  await expect(panelEditPage.panel.locator).toContainText('No data');
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await expect(panel.getByTestId('jmap-workspace')).toBeVisible();
+  await panel.getByRole('button', { name: 'Mapa', exact: true }).click();
+  await expect(panel.getByTestId('jmap-original-map')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Abrir painel de incidentes' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await expect(panel.getByTestId('network-canvas')).toHaveAttribute('data-view', 'topology');
+  await expect(panel.getByRole('button', { name: /CORE-CENTRO-01.*Online.*POP Centro/ })).toBeVisible();
 });
 
-test('should display circle when data is passed to the panel', async ({
-  panelEditPage,
-  readProvisionedDataSource,
-  page,
-}) => {
-  const ds = await readProvisionedDataSource({ fileName: 'datasources.yml' });
-  await panelEditPage.datasource.set(ds.name);
-  await panelEditPage.setVisualization('JMAP');
-  await expect(page.getByTestId('simple-panel-circle')).toBeVisible();
-});
-
-test('should display series counter when "Show series counter" option is enabled', async ({
+test('creates draft connections, undoes, redoes and cancels without persisting', async ({
   gotoPanelEditPage,
   readProvisionedDashboard,
-  page,
 }) => {
-  const dashboard = await readProvisionedDashboard({ fileName: 'dashboard.json' });
-  const panelEditPage = await gotoPanelEditPage({ dashboard, id: '1' });
-  const options = panelEditPage.getCustomOptions('JMAP');
-  const showSeriesCounter = options.getSwitch('Show series counter');
-
-  await showSeriesCounter.check();
-  await expect(page.getByTestId('simple-panel-series-counter')).toBeVisible();
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: 'Editar layout' }).click();
+  await panel.getByRole('button', { name: 'Conectar', exact: true }).click();
+  await panel.getByLabel('Origem da conexão').selectOption(JSON.stringify(['centro', 'centro-0']));
+  await panel.getByLabel('Destino da conexão').selectOption(JSON.stringify(['norte', 'norte-0']));
+  const routes = panel.getByLabel('Rota para conectar').locator('option');
+  const before = await routes.count();
+  await panel.getByRole('button', { name: 'Conectar itens', exact: true }).click();
+  await expect(routes).toHaveCount(before + 1);
+  await panel.getByRole('button', { name: 'Desfazer', exact: true }).click();
+  await expect(routes).toHaveCount(before);
+  await panel.getByRole('button', { name: 'Refazer', exact: true }).click();
+  await expect(routes).toHaveCount(before + 1);
+  await panel.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await panel.getByRole('button', { name: 'Editar layout' }).click();
+  await panel.getByRole('button', { name: 'Conectar', exact: true }).click();
+  await expect(routes).toHaveCount(before);
 });

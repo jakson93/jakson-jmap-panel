@@ -6,6 +6,19 @@ import { RoutesEditor } from './components/RoutesEditor';
 import { PanelOptions } from './types';
 
 export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions((builder) => {
+  builder.addRadio({
+    path: 'viewMode',
+    name: 'Exibição inicial',
+    description: 'Mapa geográfico ou topologia com posições independentes.',
+    category: ['Visualização'],
+    defaultValue: 'map',
+    settings: {
+      options: [
+        { label: 'Mapa', value: 'map' },
+        { label: 'Topologia', value: 'topology' },
+      ],
+    },
+  });
   builder.addCustomEditor({
     id: 'routes',
     path: 'routes',

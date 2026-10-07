@@ -14,7 +14,7 @@ import {
 } from '../types';
 import { RouteDrawMap } from './RouteDrawMap';
 
-const ALLOWED_METRIC_IDS = new Set(['download', 'upload']);
+const ALLOWED_METRIC_IDS = new Set(['download', 'upload', 'rx', 'tx']);
 const DEFAULT_METRICS: RouteMetric[] = [
   { id: 'download', label: 'Download (Mbps)', description: 'Consumo de download da interface', enabled: false },
   { id: 'upload', label: 'Upload (Mbps)', description: 'Consumo de upload da interface', enabled: false },
@@ -50,7 +50,10 @@ const createEmptyRoute = (): Route => ({
 
 const cloneRoute = (route: Route): Route => ({
   ...route,
-  metrics: route.metrics.filter((m) => ALLOWED_METRIC_IDS.has(m.id)).map((m) => ({ ...m })),
+  metrics: [
+    ...route.metrics.map((m) => ({ ...m })),
+    ...DEFAULT_METRICS.filter((m) => !route.metrics.some((existing) => existing.id === m.id)).map((m) => ({ ...m })),
+  ],
   extraMetrics: route.extraMetrics.map((m) => ({ ...m })),
   trunks:
     route.trunks?.map((trunk) => ({
@@ -991,8 +994,8 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
             <ul style={{ marginTop: 8, paddingLeft: 20 }}>
               <li>Clique no mapa para adicionar pontos a rota</li>
               <li>A rota sera desenhada conectando os pontos na ordem</li>
-              <li>Use \"Desfazer\" para remover o ultimo ponto</li>
-              <li>Use \"Limpar\" para recomecar</li>
+              <li>Use &quot;Desfazer&quot; para remover o ultimo ponto</li>
+              <li>Use &quot;Limpar&quot; para recomecar</li>
               <li>Minimo de 2 pontos necessarios</li>
             </ul>
             <div style={{ marginTop: 8 }}>

@@ -85,7 +85,14 @@ export type Route = {
   thresholds?: RouteThresholds;
   colors: RouteColors;
   points: RoutePoint[];
+  source?: NetworkEndpoint;
+  target?: NetworkEndpoint;
+  topologyPoints?: CanvasPoint[];
 };
+
+export type CanvasPoint = { x: number; y: number };
+export type NetworkEndpoint = { popId: string; equipmentId?: string };
+export type NetworkView = 'map' | 'topology';
 
 export type PopMetric = {
   id: string;
@@ -113,6 +120,7 @@ export type PopEquipment = {
   observation?: string;
   observationShow?: boolean;
   metrics: PopMetric[];
+  topologyPosition?: CanvasPoint;
 };
 
 export type Pop = {
@@ -128,9 +136,11 @@ export type Pop = {
   coverageColor?: string;
   coverageOpacity?: number;
   equipments: PopEquipment[];
+  topologyPosition?: CanvasPoint;
 };
 
 export interface PanelOptions {
+  viewMode?: NetworkView;
   centerLat: number;
   centerLng: number;
   zoom: number;

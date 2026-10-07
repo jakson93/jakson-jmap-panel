@@ -1,0 +1,604 @@
+{
+  "uid": "jmap-lab",
+  "title": "JMAP · Laboratório (dados demonstrativos)",
+  "tags": [
+    "jmap",
+    "demo"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "jakson-jmap-panel",
+      "title": "Rede de demonstração · sem conexão à produção",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 18
+      },
+      "options": {
+        "viewMode": "map",
+        "centerLat": -23.52,
+        "centerLng": -46.62,
+        "zoom": 10,
+        "mapProvider": "osm",
+        "pops": [
+          {
+            "id": "centro",
+            "name": "POP Centro",
+            "lat": -23.5505,
+            "lng": -46.6333,
+            "showName": true,
+            "equipments": [
+              {
+                "id": "centro-0",
+                "name": "CORE-CENTRO-01",
+                "type": "Router",
+                "ip": "192.0.2.1",
+                "statusItem": "centro-0.status",
+                "onlineValue": "1",
+                "cpuItem": "centro-0.cpu",
+                "memoryItem": "centro-0.mem",
+                "temperatureItem": "centro-0.temp",
+                "uptimeItem": "centro-0.uptime",
+                "metrics": [],
+                "topologyPosition": {
+                  "x": 95,
+                  "y": 440
+                }
+              },
+              {
+                "id": "centro-1",
+                "name": "SW-CENTRO-01",
+                "type": "Switch",
+                "ip": "192.0.2.6",
+                "statusItem": "centro-1.status",
+                "onlineValue": "1",
+                "cpuItem": "centro-1.cpu",
+                "memoryItem": "centro-1.mem",
+                "temperatureItem": "centro-1.temp",
+                "uptimeItem": "centro-1.uptime",
+                "metrics": [],
+                "topologyPosition": {
+                  "x": 285,
+                  "y": 440
+                }
+              }
+            ],
+            "topologyPosition": {
+              "x": 180,
+              "y": 300
+            }
+          },
+          {
+            "id": "norte",
+            "name": "POP Norte",
+            "lat": -23.32,
+            "lng": -46.58,
+            "showName": true,
+            "equipments": [
+              {
+                "id": "norte-0",
+                "name": "RTR-NORTE-01",
+                "type": "Router",
+                "ip": "192.0.2.11",
+                "statusItem": "norte-0.status",
+                "onlineValue": "1",
+                "cpuItem": "norte-0.cpu",
+                "memoryItem": "norte-0.mem",
+                "temperatureItem": "norte-0.temp",
+                "uptimeItem": "norte-0.uptime",
+                "metrics": [],
+                "topologyPosition": {
+                  "x": 465,
+                  "y": 230
+                }
+              },
+              {
+                "id": "norte-1",
+                "name": "SW-NORTE-01",
+                "type": "Switch",
+                "ip": "192.0.2.16",
+                "statusItem": "norte-1.status",
+                "onlineValue": "1",
+                "cpuItem": "norte-1.cpu",
+                "memoryItem": "norte-1.mem",
+                "temperatureItem": "norte-1.temp",
+                "uptimeItem": "norte-1.uptime",
+                "metrics": [],
+                "topologyPosition": {
+                  "x": 655,
+                  "y": 230
+                }
+              }
+            ],
+            "topologyPosition": {
+              "x": 550,
+              "y": 90
+            }
+          },
+          {
+            "id": "sul",
+            "name": "POP Sul",
+            "lat": -23.72,
+            "lng": -46.65,
+            "showName": true,
+            "equipments": [
+              {
+                "id": "sul-0",
+                "name": "RTR-SUL-01",
+                "type": "Router",
+                "ip": "192.0.2.21",
+                "statusItem": "sul-0.status",
+                "onlineValue": "1",
+                "cpuItem": "sul-0.cpu",
+                "memoryItem": "sul-0.mem",
+                "temperatureItem": "sul-0.temp",
+                "uptimeItem": "sul-0.uptime",
+                "metrics": [],
+                "topologyPosition": {
+                  "x": 815,
+                  "y": 440
+                }
+              },
+              {
+                "id": "sul-1",
+                "name": "SW-SUL-01",
+                "type": "Switch",
+                "ip": "192.0.2.26",
+                "statusItem": "sul-1.status",
+                "onlineValue": "1",
+                "cpuItem": "sul-1.cpu",
+                "memoryItem": "sul-1.mem",
+                "temperatureItem": "sul-1.temp",
+                "uptimeItem": "sul-1.uptime",
+                "metrics": [],
+                "topologyPosition": {
+                  "x": 1005,
+                  "y": 440
+                }
+              }
+            ],
+            "topologyPosition": {
+              "x": 900,
+              "y": 300
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "rota-0",
+            "name": "POP Centro → POP Norte",
+            "interfaceItem": "rota-0.status",
+            "onlineValue": "1",
+            "capacityManualText": "10 Gbps",
+            "colors": {
+              "online": "#73BF69",
+              "alert": "#FFB357",
+              "down": "#F2495C"
+            },
+            "source": {
+              "popId": "centro",
+              "equipmentId": "centro-0"
+            },
+            "target": {
+              "popId": "norte",
+              "equipmentId": "norte-0"
+            },
+            "points": [
+              {
+                "lat": -23.5505,
+                "lng": -46.6333
+              },
+              {
+                "lat": -23.41025,
+                "lng": -46.571650000000005
+              },
+              {
+                "lat": -23.32,
+                "lng": -46.58
+              }
+            ],
+            "metrics": [
+              {
+                "id": "rx",
+                "label": "RX",
+                "enabled": true,
+                "zabbixItem": "rota-0.rx"
+              },
+              {
+                "id": "tx",
+                "label": "TX",
+                "enabled": true,
+                "zabbixItem": "rota-0.tx"
+              },
+              {
+                "id": "download",
+                "label": "DOWNLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-0.download"
+              },
+              {
+                "id": "upload",
+                "label": "UPLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-0.upload"
+              }
+            ],
+            "extraMetrics": [],
+            "trunks": [],
+            "thresholds": {
+              "enabled": true,
+              "rxLow": -25
+            },
+            "topologyPoints": []
+          },
+          {
+            "id": "rota-1",
+            "name": "POP Centro → POP Sul",
+            "interfaceItem": "rota-1.status",
+            "onlineValue": "1",
+            "capacityManualText": "10 Gbps",
+            "colors": {
+              "online": "#73BF69",
+              "alert": "#FFB357",
+              "down": "#F2495C"
+            },
+            "source": {
+              "popId": "centro",
+              "equipmentId": "centro-0"
+            },
+            "target": {
+              "popId": "sul",
+              "equipmentId": "sul-0"
+            },
+            "points": [
+              {
+                "lat": -23.5505,
+                "lng": -46.6333
+              },
+              {
+                "lat": -23.61025,
+                "lng": -46.60665
+              },
+              {
+                "lat": -23.72,
+                "lng": -46.65
+              }
+            ],
+            "metrics": [
+              {
+                "id": "rx",
+                "label": "RX",
+                "enabled": true,
+                "zabbixItem": "rota-1.rx"
+              },
+              {
+                "id": "tx",
+                "label": "TX",
+                "enabled": true,
+                "zabbixItem": "rota-1.tx"
+              },
+              {
+                "id": "download",
+                "label": "DOWNLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-1.download"
+              },
+              {
+                "id": "upload",
+                "label": "UPLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-1.upload"
+              }
+            ],
+            "extraMetrics": [],
+            "trunks": [],
+            "thresholds": {
+              "enabled": true,
+              "rxLow": -25
+            },
+            "topologyPoints": []
+          },
+          {
+            "id": "rota-2",
+            "name": "POP Norte → POP Sul",
+            "interfaceItem": "rota-2.status",
+            "onlineValue": "1",
+            "capacityManualText": "10 Gbps",
+            "colors": {
+              "online": "#73BF69",
+              "alert": "#FFB357",
+              "down": "#F2495C"
+            },
+            "source": {
+              "popId": "norte",
+              "equipmentId": "norte-1"
+            },
+            "target": {
+              "popId": "sul",
+              "equipmentId": "sul-1"
+            },
+            "points": [
+              {
+                "lat": -23.32,
+                "lng": -46.58
+              },
+              {
+                "lat": -23.495,
+                "lng": -46.58
+              },
+              {
+                "lat": -23.72,
+                "lng": -46.65
+              }
+            ],
+            "metrics": [
+              {
+                "id": "rx",
+                "label": "RX",
+                "enabled": true,
+                "zabbixItem": "rota-2.rx"
+              },
+              {
+                "id": "tx",
+                "label": "TX",
+                "enabled": true,
+                "zabbixItem": "rota-2.tx"
+              },
+              {
+                "id": "download",
+                "label": "DOWNLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-2.download"
+              },
+              {
+                "id": "upload",
+                "label": "UPLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-2.upload"
+              }
+            ],
+            "extraMetrics": [],
+            "trunks": [],
+            "thresholds": {
+              "enabled": true,
+              "rxLow": -25
+            },
+            "topologyPoints": []
+          },
+          {
+            "id": "rota-3",
+            "name": "POP Centro · LAN",
+            "interfaceItem": "rota-3.status",
+            "onlineValue": "1",
+            "capacityManualText": "10 Gbps",
+            "colors": {
+              "online": "#73BF69",
+              "alert": "#FFB357",
+              "down": "#F2495C"
+            },
+            "source": {
+              "popId": "centro",
+              "equipmentId": "centro-0"
+            },
+            "target": {
+              "popId": "centro",
+              "equipmentId": "centro-1"
+            },
+            "points": [
+              {
+                "lat": -23.5505,
+                "lng": -46.6333
+              },
+              {
+                "lat": -23.5505,
+                "lng": -46.6333
+              },
+              {
+                "lat": -23.5505,
+                "lng": -46.6333
+              }
+            ],
+            "metrics": [
+              {
+                "id": "rx",
+                "label": "RX",
+                "enabled": true,
+                "zabbixItem": "rota-3.rx"
+              },
+              {
+                "id": "tx",
+                "label": "TX",
+                "enabled": true,
+                "zabbixItem": "rota-3.tx"
+              },
+              {
+                "id": "download",
+                "label": "DOWNLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-3.download"
+              },
+              {
+                "id": "upload",
+                "label": "UPLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-3.upload"
+              }
+            ],
+            "extraMetrics": [],
+            "trunks": [],
+            "thresholds": {
+              "enabled": true,
+              "rxLow": -25
+            },
+            "topologyPoints": []
+          },
+          {
+            "id": "rota-4",
+            "name": "POP Norte · LAN",
+            "interfaceItem": "rota-4.status",
+            "onlineValue": "1",
+            "capacityManualText": "10 Gbps",
+            "colors": {
+              "online": "#73BF69",
+              "alert": "#FFB357",
+              "down": "#F2495C"
+            },
+            "source": {
+              "popId": "norte",
+              "equipmentId": "norte-0"
+            },
+            "target": {
+              "popId": "norte",
+              "equipmentId": "norte-1"
+            },
+            "points": [
+              {
+                "lat": -23.32,
+                "lng": -46.58
+              },
+              {
+                "lat": -23.32,
+                "lng": -46.58
+              },
+              {
+                "lat": -23.32,
+                "lng": -46.58
+              }
+            ],
+            "metrics": [
+              {
+                "id": "rx",
+                "label": "RX",
+                "enabled": true,
+                "zabbixItem": "rota-4.rx"
+              },
+              {
+                "id": "tx",
+                "label": "TX",
+                "enabled": true,
+                "zabbixItem": "rota-4.tx"
+              },
+              {
+                "id": "download",
+                "label": "DOWNLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-4.download"
+              },
+              {
+                "id": "upload",
+                "label": "UPLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-4.upload"
+              }
+            ],
+            "extraMetrics": [],
+            "trunks": [],
+            "thresholds": {
+              "enabled": true,
+              "rxLow": -25
+            },
+            "topologyPoints": []
+          },
+          {
+            "id": "rota-5",
+            "name": "POP Sul · LAN",
+            "interfaceItem": "rota-5.status",
+            "onlineValue": "1",
+            "capacityManualText": "10 Gbps",
+            "colors": {
+              "online": "#73BF69",
+              "alert": "#FFB357",
+              "down": "#F2495C"
+            },
+            "source": {
+              "popId": "sul",
+              "equipmentId": "sul-0"
+            },
+            "target": {
+              "popId": "sul",
+              "equipmentId": "sul-1"
+            },
+            "points": [
+              {
+                "lat": -23.72,
+                "lng": -46.65
+              },
+              {
+                "lat": -23.72,
+                "lng": -46.65
+              },
+              {
+                "lat": -23.72,
+                "lng": -46.65
+              }
+            ],
+            "metrics": [
+              {
+                "id": "rx",
+                "label": "RX",
+                "enabled": true,
+                "zabbixItem": "rota-5.rx"
+              },
+              {
+                "id": "tx",
+                "label": "TX",
+                "enabled": true,
+                "zabbixItem": "rota-5.tx"
+              },
+              {
+                "id": "download",
+                "label": "DOWNLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-5.download"
+              },
+              {
+                "id": "upload",
+                "label": "UPLOAD",
+                "enabled": true,
+                "zabbixItem": "rota-5.upload"
+              }
+            ],
+            "extraMetrics": [],
+            "trunks": [],
+            "thresholds": {
+              "enabled": true,
+              "rxLow": -25
+            },
+            "topologyPoints": []
+          }
+        ],
+        "transportLineAnimation": "static",
+        "transportLineWeight": 3
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "jmap-testdata"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "scenarioId": "raw_frame",
+          "rawFrameContent": "[{\"name\": \"Demonstra\\u00e7\\u00e3o\", \"fields\": [{\"name\": \"time\", \"type\": \"time\", \"values\": [1791385200000, 1791385260000]}, {\"name\": \"centro-0.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"centro-0.cpu\", \"type\": \"number\", \"values\": [32, 32], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"centro-0.mem\", \"type\": \"number\", \"values\": [46, 46], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"centro-0.temp\", \"type\": \"number\", \"values\": [48, 48], \"config\": {\"unit\": \"celsius\"}}, {\"name\": \"centro-0.uptime\", \"type\": \"number\", \"values\": [123456, 123456], \"config\": {\"unit\": \"s\"}}, {\"name\": \"centro-1.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"centro-1.cpu\", \"type\": \"number\", \"values\": [40, 40], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"centro-1.mem\", \"type\": \"number\", \"values\": [51, 51], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"centro-1.temp\", \"type\": \"number\", \"values\": [52, 52], \"config\": {\"unit\": \"celsius\"}}, {\"name\": \"centro-1.uptime\", \"type\": \"number\", \"values\": [123456, 123456], \"config\": {\"unit\": \"s\"}}, {\"name\": \"norte-0.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"norte-0.cpu\", \"type\": \"number\", \"values\": [32, 32], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"norte-0.mem\", \"type\": \"number\", \"values\": [46, 46], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"norte-0.temp\", \"type\": \"number\", \"values\": [48, 48], \"config\": {\"unit\": \"celsius\"}}, {\"name\": \"norte-0.uptime\", \"type\": \"number\", \"values\": [123456, 123456], \"config\": {\"unit\": \"s\"}}, {\"name\": \"norte-1.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"norte-1.cpu\", \"type\": \"number\", \"values\": [40, 40], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"norte-1.mem\", \"type\": \"number\", \"values\": [51, 51], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"norte-1.temp\", \"type\": \"number\", \"values\": [52, 52], \"config\": {\"unit\": \"celsius\"}}, {\"name\": \"norte-1.uptime\", \"type\": \"number\", \"values\": [123456, 123456], \"config\": {\"unit\": \"s\"}}, {\"name\": \"sul-0.status\", \"type\": \"number\", \"values\": [0, 0], \"config\": {\"unit\": \"short\"}}, {\"name\": \"sul-0.cpu\", \"type\": \"number\", \"values\": [32, 32], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"sul-0.mem\", \"type\": \"number\", \"values\": [46, 46], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"sul-0.temp\", \"type\": \"number\", \"values\": [48, 48], \"config\": {\"unit\": \"celsius\"}}, {\"name\": \"sul-0.uptime\", \"type\": \"number\", \"values\": [123456, 123456], \"config\": {\"unit\": \"s\"}}, {\"name\": \"sul-1.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"sul-1.cpu\", \"type\": \"number\", \"values\": [40, 40], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"sul-1.mem\", \"type\": \"number\", \"values\": [51, 51], \"config\": {\"unit\": \"percent\"}}, {\"name\": \"sul-1.temp\", \"type\": \"number\", \"values\": [52, 52], \"config\": {\"unit\": \"celsius\"}}, {\"name\": \"sul-1.uptime\", \"type\": \"number\", \"values\": [123456, 123456], \"config\": {\"unit\": \"s\"}}, {\"name\": \"rota-0.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"rota-0.rx\", \"type\": \"number\", \"values\": [-28, -28], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-0.tx\", \"type\": \"number\", \"values\": [-5.8, -5.8], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-0.download\", \"type\": \"number\", \"values\": [7800000000, 7800000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-0.upload\", \"type\": \"number\", \"values\": [640000000, 640000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-1.status\", \"type\": \"number\", \"values\": [0, 0], \"config\": {\"unit\": \"short\"}}, {\"name\": \"rota-1.rx\", \"type\": \"number\", \"values\": [-15, -15], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-1.tx\", \"type\": \"number\", \"values\": [-5.8, -5.8], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-1.download\", \"type\": \"number\", \"values\": [1200000000, 1200000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-1.upload\", \"type\": \"number\", \"values\": [640000000, 640000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-2.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"rota-2.rx\", \"type\": \"number\", \"values\": [-15, -15], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-2.tx\", \"type\": \"number\", \"values\": [-5.8, -5.8], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-2.download\", \"type\": \"number\", \"values\": [1200000000, 1200000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-2.upload\", \"type\": \"number\", \"values\": [640000000, 640000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-3.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"rota-3.rx\", \"type\": \"number\", \"values\": [-15, -15], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-3.tx\", \"type\": \"number\", \"values\": [-5.8, -5.8], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-3.download\", \"type\": \"number\", \"values\": [1200000000, 1200000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-3.upload\", \"type\": \"number\", \"values\": [640000000, 640000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-4.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"rota-4.rx\", \"type\": \"number\", \"values\": [-15, -15], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-4.tx\", \"type\": \"number\", \"values\": [-5.8, -5.8], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-4.download\", \"type\": \"number\", \"values\": [1200000000, 1200000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-4.upload\", \"type\": \"number\", \"values\": [640000000, 640000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-5.status\", \"type\": \"number\", \"values\": [1, 1], \"config\": {\"unit\": \"short\"}}, {\"name\": \"rota-5.rx\", \"type\": \"number\", \"values\": [-15, -15], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-5.tx\", \"type\": \"number\", \"values\": [-5.8, -5.8], \"config\": {\"unit\": \"dBm\"}}, {\"name\": \"rota-5.download\", \"type\": \"number\", \"values\": [1200000000, 1200000000], \"config\": {\"unit\": \"bps\"}}, {\"name\": \"rota-5.upload\", \"type\": \"number\", \"values\": [640000000, 640000000], \"config\": {\"unit\": \"bps\"}}]}]",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "jmap-testdata"
+          }
+        }
+      ]
+    }
+  ]
+}
