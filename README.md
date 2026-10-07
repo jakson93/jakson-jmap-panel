@@ -10,6 +10,8 @@ Use a branch `codex/mapa-topologia` em homologação. O original está preservad
 
 Veja o [passo a passo para testar, instalar e reverter](docs/TESTAR-E-REVERTER.md), incluindo um Grafana separado via `compose.homolog.yaml` e um dashboard com dados demonstrativos.
 
+![Cards dentro do mapa](docs/images/jmap-cards-final.png)
+
 ## Instalar no Grafana (Linux)
 
 Este é um plugin **não assinado**, então o Grafana precisa permitir plugins não assinados.
