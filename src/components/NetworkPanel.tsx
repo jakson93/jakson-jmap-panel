@@ -4,7 +4,16 @@ import { css, cx } from '@emotion/css';
 import { GrafanaTheme2, LoadingState, PanelProps } from '@grafana/data';
 import { Button, Icon, useStyles2, useTheme2 } from '@grafana/ui';
 import { PanelOptions, NetworkView } from '../types';
-import { connectNodes, moveNode, networkNodes, routePath, updateRoutePath } from '../networkModel';
+import {
+  connectNodes,
+  moveNode,
+  networkNodes,
+  organizeTopology,
+  routeEndpoint,
+  routePath,
+  updateRoutePath,
+} from '../networkModel';
+import { topologyNodes, topologyPaths } from '../networkPresentation';
 import { equipmentStatus, popStatus, readTelemetry, routeStatus, statusColor, statusLabel } from '../networkTelemetry';
 import { NetworkCanvas, EditTool } from './NetworkCanvas';
 import { MapView } from './MapView';
@@ -26,16 +35,57 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
   const [bindRoute, setBindRoute] = React.useState('');
   const [fromId, setFromId] = React.useState('');
   const [toId, setToId] = React.useState('');
+  const [expandedPops, setExpandedPops] = React.useState<Set<string>>(new Set());
   const map = React.useRef<L.Map>();
   const root = React.useRef<HTMLDivElement>(null);
   const editing = Boolean(draft);
   const current = draft ?? options;
   const nodes = React.useMemo(() => networkNodes(current, view), [current, view]);
+  const expanded = React.useMemo(
+    () => (editing ? new Set((current.pops ?? []).map((p) => p.id)) : expandedPops),
+    [editing, current.pops, expandedPops]
+  );
+  const visibleNodes = React.useMemo(
+    () => (view === 'topology' ? topologyNodes(nodes, expanded) : nodes),
+    [view, nodes, expanded]
+  );
+  const displayPaths = React.useMemo(
+    () => topologyPaths(current, nodes, expanded, editing),
+    [current, nodes, expanded, editing]
+  );
   const readings = React.useMemo(
     () => readTelemetry(data.series ?? [], theme, timeZone),
     [data.series, theme, timeZone]
   );
   const routes = current.routes ?? [];
+  const routeCounts = React.useMemo(() => {
+    const counts = { online: 0, alert: 0, down: 0, unknown: 0 };
+    for (const route of current.routes ?? []) {
+      counts[routeStatus(route, readings)]++;
+    }
+    return counts;
+  }, [current.routes, readings]);
+  const togglePop = (id: string) =>
+    setExpandedPops((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  const selectRoute = (id: string) => {
+    const route = routes.find((r) => r.id === id);
+    if (route && view === 'topology') {
+      const source = routeEndpoint(route, 'source', current.pops);
+      const target = routeEndpoint(route, 'target', current.pops);
+      if (source?.popId === target?.popId && source) {
+        setExpandedPops((previous) => new Set([...previous, source.popId]));
+      }
+    }
+    setSelection({ kind: 'route', id });
+  };
   const selectedNode = selection?.kind === 'node' ? nodes.find((n) => n.id === selection.id) : undefined;
   const selectedRoute = selection?.kind === 'route' ? routes.find((r) => r.id === selection.id) : undefined;
   const conflicting = Boolean(draft && JSON.stringify(options) !== base);
@@ -141,14 +191,20 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     if (!map.current || !nodes.length) {
       return;
     }
-    const points: L.LatLngTuple[] = nodes.map((node) => [
+    const points: L.LatLngTuple[] = visibleNodes.map((node) => [
       view === 'map' ? node.position.y : -node.position.y,
       node.position.x,
     ]);
     routes.forEach((route) =>
-      routePath(route, current, view, nodes).forEach((p) => points.push([view === 'map' ? p.y : -p.y, p.x]))
+      (view === 'topology' ? (displayPaths.get(route.id) ?? []) : routePath(route, current, view, nodes)).forEach((p) =>
+        points.push([view === 'map' ? p.y : -p.y, p.x])
+      )
     );
-    map.current.fitBounds(L.latLngBounds(points), { padding: [100, 90], maxZoom: view === 'map' ? 14 : 0 });
+    map.current.fitBounds(L.latLngBounds(points), {
+      paddingTopLeft: [100, 200],
+      paddingBottomRight: [100, 120],
+      maxZoom: view === 'map' ? 14 : 0,
+    });
   };
   const selectedStatus = selectedRoute
     ? routeStatus(selectedRoute, readings)
@@ -159,6 +215,15 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
         : 'unknown';
   const value = (item?: string) => (item ? readings.get(item.trim())?.text : undefined) ?? '—';
   const routeMetric = (id: string) => value(selectedRoute?.metrics.find((m) => m.id === id)?.zabbixItem);
+  const endpointName = (side: 'source' | 'target') => {
+    if (!selectedRoute) {
+      return '';
+    }
+    const endpoint = routeEndpoint(selectedRoute, side, current.pops);
+    const pop = current.pops.find((p) => p.id === endpoint?.popId);
+    const equipment = pop?.equipments.find((e) => e.id === endpoint?.equipmentId);
+    return pop ? `${pop.name}${equipment ? ` / ${equipment.name}` : ''}` : 'Não vinculada';
+  };
   const compact = width < 760;
   if (view === 'map' && !editing) {
     return (
@@ -275,8 +340,45 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             onReady={(ready) => {
               map.current = ready;
             }}
+            expanded={expanded}
+            onTogglePop={togglePop}
           />
-          <div className={styles.tools} role="toolbar" aria-label="Ferramentas da rede">
+          {view === 'topology' && !editing && (
+            <div className={styles.overview} aria-label="Resumo da rede">
+              <div>
+                <small>POPs</small>
+                <strong>{current.pops?.length ?? 0}</strong>
+              </div>
+              <div>
+                <small>Equipamentos</small>
+                <strong>{current.pops?.reduce((n, p) => n + p.equipments.length, 0) ?? 0}</strong>
+              </div>
+              <div>
+                <small>Rotas</small>
+                <strong>{routes.length}</strong>
+              </div>
+              <div>
+                <small>Em falha</small>
+                <strong style={{ color: statusColor('down', theme) }}>{routeCounts.down}</strong>
+              </div>
+              <div>
+                <small>Em alerta</small>
+                <strong style={{ color: statusColor('alert', theme) }}>{routeCounts.alert}</strong>
+              </div>
+              {routeCounts.unknown > 0 && (
+                <div>
+                  <small>Sem dados</small>
+                  <strong>{routeCounts.unknown}</strong>
+                </div>
+              )}
+            </div>
+          )}
+          <div
+            className={styles.tools}
+            style={{ top: theme.spacing(editing ? 10 : 18) }}
+            role="toolbar"
+            aria-label="Ferramentas da rede"
+          >
             <Button
               variant={inventory ? 'primary' : 'secondary'}
               icon="list-ul"
@@ -309,7 +411,49 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                   disabled={!future.length}
                   onClick={redo}
                 />
+                {view === 'topology' && (
+                  <Button
+                    variant="secondary"
+                    icon="layer-group"
+                    disabled={!nodes.length}
+                    onClick={() => {
+                      const organized = organizeTopology(
+                        current,
+                        parseFloat(theme.spacing(29)),
+                        parseFloat(theme.spacing(20))
+                      );
+                      change(organized);
+                      setMessage('Grupos organizados em rascunho. Os desvios manuais das rotas foram mantidos.');
+                      setSelection(undefined);
+                      // Use the next committed draft for fitting, after Leaflet receives the positions.
+                      requestAnimationFrame(() =>
+                        map.current?.fitBounds(
+                          L.latLngBounds(
+                            networkNodes(organized, 'topology').map(
+                              (node) => [-node.position.y, node.position.x] as L.LatLngTuple
+                            )
+                          ),
+                          { paddingTopLeft: [125, 200], paddingBottomRight: [125, 120], maxZoom: 0 }
+                        )
+                      );
+                    }}
+                  >
+                    Organizar grupos
+                  </Button>
+                )}
               </>
+            )}
+            {view === 'topology' && !editing && (
+              <Button
+                variant="secondary"
+                icon="layer-group"
+                onClick={() => {
+                  setExpandedPops(expandedPops.size ? new Set() : new Set(current.pops.map((p) => p.id)));
+                  setSelection(undefined);
+                }}
+              >
+                {expandedPops.size ? 'Recolher POPs' : 'Expandir POPs'}
+              </Button>
             )}
             <Button variant="secondary" icon="expand-arrows" onClick={fit}>
               Enquadrar
@@ -339,6 +483,9 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                     key={node.id}
                     onClick={() => {
                       setSelection({ kind: 'node', id: node.id });
+                      if (node.equipment) {
+                        setExpandedPops((previous) => new Set([...previous, node.pop.id]));
+                      }
                       map.current?.panTo([view === 'map' ? node.position.y : -node.position.y, node.position.x]);
                     }}
                   >
@@ -350,7 +497,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
               {routes
                 .filter((r) => r.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
                 .map((route) => (
-                  <button key={route.id} onClick={() => setSelection({ kind: 'route', id: route.id })}>
+                  <button key={route.id} onClick={() => selectRoute(route.id)}>
                     <strong>{route.name}</strong>
                     <small style={{ color: statusColor(routeStatus(route, readings), theme) }}>
                       {statusLabel[routeStatus(route, readings)]}
@@ -499,6 +646,49 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 </div>
               ))}
             </div>
+            {selectedRoute && (
+              <div className={styles.endpointInfo}>
+                <div>
+                  <small>Origem</small>
+                  <strong>{endpointName('source')}</strong>
+                </div>
+                <div>
+                  <small>Destino</small>
+                  <strong>{endpointName('target')}</strong>
+                </div>
+                <small>As extremidades reais são mantidas quando os POPs estão recolhidos.</small>
+              </div>
+            )}
+            {selectedNode && !selectedNode.equipment && !editing && (
+              <>
+                <Button
+                  variant="secondary"
+                  icon="layer-group"
+                  onClick={() => {
+                    togglePop(selectedNode.pop.id);
+                    setSelection(undefined);
+                  }}
+                >
+                  {expandedPops.has(selectedNode.pop.id) ? 'Recolher equipamentos' : 'Expandir equipamentos'}
+                </Button>
+                <div className={styles.equipmentList} aria-label="Equipamentos deste POP">
+                  {selectedNode.pop.equipments.map((equipment) => (
+                    <button
+                      key={equipment.id}
+                      onClick={() => {
+                        setExpandedPops((previous) => new Set([...previous, selectedNode.pop.id]));
+                        setSelection({ kind: 'node', id: JSON.stringify([selectedNode.pop.id, equipment.id]) });
+                      }}
+                    >
+                      <strong>{equipment.name}</strong>
+                      <span style={{ color: statusColor(equipmentStatus(equipment, readings), theme) }}>
+                        {statusLabel[equipmentStatus(equipment, readings)]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {editing && selectedRoute && (
               <div className={styles.actions}>
                 <label>
@@ -559,7 +749,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                   : 'Arraste os itens para posicionar.'
               : data.state === LoadingState.Loading
                 ? 'Atualizando dados…'
-                : 'Selecione um item para inspecionar a rede.')}
+                : 'Selecione um POP ou uma rota. Expanda um POP para ver seus equipamentos.')}
         </span>
         {unbound > 0 && <span>{unbound} rota(s) sem extremidades vinculadas. Use Conectar → Vincular.</span>}
         <div className={styles.legend}>
@@ -612,6 +802,10 @@ function getStyles(t: GrafanaTheme2) {
         border,
         borderRadius: t.shape.radius.default,
         padding: t.spacing(0.75),
+        minHeight: t.spacing(4.5),
+        fontFamily: t.typography.fontFamily,
+        fontSize: t.typography.body.fontSize,
+        lineHeight: t.typography.body.lineHeight,
         minWidth: 0,
         maxWidth: '100%',
       },
@@ -684,7 +878,7 @@ function getStyles(t: GrafanaTheme2) {
     tools: css({
       position: 'absolute',
       zIndex: 500,
-      top: t.spacing(10),
+      top: t.spacing(18),
       left: t.spacing(1.5),
       right: t.spacing(1.5),
       display: 'flex',
@@ -713,10 +907,11 @@ function getStyles(t: GrafanaTheme2) {
     inspector: css({
       position: 'absolute',
       zIndex: 550,
-      bottom: t.spacing(6),
-      left: t.spacing(2),
+      bottom: t.spacing(7),
+      top: t.spacing(10),
+      width: t.spacing(43),
+      maxWidth: '45%',
       right: t.spacing(2),
-      maxHeight: '42%',
       overflowY: 'auto',
       borderRadius: t.shape.radius.default,
       boxShadow: t.shadows.z2,
@@ -737,7 +932,7 @@ function getStyles(t: GrafanaTheme2) {
     }),
     metrics: css({
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
+      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
       gap: t.spacing(2),
       '> div': { paddingLeft: t.spacing(1.5), borderLeft: border, minWidth: 0 },
       small: { color: t.colors.text.secondary },
@@ -748,6 +943,51 @@ function getStyles(t: GrafanaTheme2) {
         overflowWrap: 'anywhere',
         fontVariantNumeric: 'tabular-nums',
       },
+    }),
+    overview: css({
+      position: 'absolute',
+      zIndex: 500,
+      top: t.spacing(10),
+      left: t.spacing(1.5),
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: t.spacing(2.5),
+      maxWidth: 'calc(100% - 24px)',
+      padding: t.spacing(1, 1.5),
+      border,
+      background: t.colors.background.primary,
+      borderRadius: t.shape.radius.default,
+      boxShadow: t.shadows.z1,
+      '> div': { display: 'flex', alignItems: 'baseline', gap: t.spacing(1) },
+      small: { color: t.colors.text.secondary, fontSize: t.typography.bodySmall.fontSize },
+      strong: { fontSize: t.typography.h5.fontSize, fontVariantNumeric: 'tabular-nums' },
+    }),
+    endpointInfo: css({
+      display: 'flex',
+      flexDirection: 'column',
+      gap: t.spacing(1),
+      '> div': { display: 'flex', flexDirection: 'column', gap: t.spacing(0.5) },
+      small: { color: t.colors.text.secondary, fontSize: t.typography.bodySmall.fontSize },
+      strong: { overflowWrap: 'anywhere', fontSize: t.typography.bodySmall.fontSize },
+    }),
+    equipmentList: css({
+      display: 'flex',
+      flexDirection: 'column',
+      gap: t.spacing(0.5),
+      button: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: t.spacing(0.5),
+        border,
+        borderRadius: t.shape.radius.default,
+        padding: t.spacing(1),
+        background: t.colors.background.secondary,
+        color: t.colors.text.primary,
+        cursor: 'pointer',
+        textAlign: 'left',
+        '&:hover': { borderColor: t.colors.primary.border },
+      },
+      span: { fontSize: t.typography.bodySmall.fontSize },
     }),
     inventory: css({
       position: 'absolute',
@@ -835,6 +1075,16 @@ function getStyles(t: GrafanaTheme2) {
       background: t.colors.background.canvas,
     }),
     legacy: css({ flex: 1, minHeight: t.spacing(40) }),
-    compact: css({ [`> section`]: { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' } }),
+    compact: css({
+      'section[aria-label="Detalhes da seleção"]': {
+        top: 'auto',
+        left: t.spacing(1),
+        right: t.spacing(1),
+        width: 'auto',
+        maxWidth: 'none',
+        maxHeight: '45%',
+        bottom: t.spacing(7),
+      },
+    }),
   };
 }

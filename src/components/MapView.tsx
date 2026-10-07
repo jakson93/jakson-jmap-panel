@@ -3,6 +3,7 @@ import L from 'leaflet';
 import { DataFrame, FieldType, PanelData, TimeRange, TimeZone } from '@grafana/data';
 import { useTheme2, useStyles2, Icon } from '@grafana/ui';
 import { mapPresentation } from './mapPresentation';
+import { MapLabels } from './MapLabels';
 import { readTelemetry } from '../networkTelemetry';
 import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -705,7 +706,7 @@ function EnsureHitboxPane({ onReady }: { onReady: () => void }) {
   React.useEffect(() => {
     if (!map.getPane('hitboxPane')) {
       const pane = map.createPane('hitboxPane');
-      pane.style.zIndex = '700';
+      pane.style.zIndex = '450';
       pane.style.pointerEvents = 'auto';
     }
     onReady();
@@ -763,7 +764,7 @@ export function MapView({
     series?: { values: number[]; times: number[] };
   } | null>(null);
   const [currentZoom, setCurrentZoom] = React.useState(zoom);
-  const [dashTick, setDashTick] = React.useState(0);
+  const [visibleLabels, setVisibleLabels] = React.useState<Set<string>>(new Set());
   const [hitboxReady, setHitboxReady] = React.useState(false);
   const [activeDownRouteIndex, setActiveDownRouteIndex] = React.useState(0);
   const [statsCollapsed, setStatsCollapsed] = React.useState(true);
@@ -774,6 +775,58 @@ export function MapView({
   const rightListRef = React.useRef<HTMLDivElement | null>(null);
   const linkCenterRef = React.useRef<HTMLDivElement | null>(null);
   const [linkLayout, setLinkLayout] = React.useState({ leftX: 0, rightX: 0, top: 0, height: 0, leftListTop: 0 });
+  React.useEffect(() => {
+    if (!selectedRouteId && !selectedPopId && !rxHistory) {
+      return;
+    }
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialogs = containerRef.current?.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const dialog = dialogs?.[dialogs.length - 1];
+    const mapContainer = mapRef.current?.getContainer();
+    if (mapContainer) {
+      mapContainer.inert = true;
+    }
+    const focusable = () =>
+      Array.from(dialog?.querySelectorAll<HTMLElement>('button, a[href], input, select, [tabindex="0"]') ?? []).filter(
+        (element) => !element.hasAttribute('disabled') && element.getClientRects().length > 0
+      );
+    focusable()[0]?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (rxHistory) {
+          setRxHistory(null);
+        } else if (selectedPopId) {
+          setSelectedPopId(null);
+        } else {
+          setSelectedRouteId(null);
+        }
+      }
+      if (event.key === 'Tab') {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', keydown, true);
+    return () => {
+      document.removeEventListener('keydown', keydown, true);
+      if (mapContainer) {
+        mapContainer.inert = false;
+      }
+      if (previousFocus?.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, [selectedRouteId, selectedPopId, rxHistory]);
   const mapZoomScale = Math.pow(2, currentZoom - zoom);
   const dataSeries = React.useMemo(() => data?.series ?? [], [data?.series]);
 
@@ -907,6 +960,14 @@ export function MapView({
 
   const routes = React.useMemo(() => options.routes ?? [], [options.routes]);
   const pops = React.useMemo(() => options.pops ?? [], [options.pops]);
+  const labelMode = options.mapLabelMode ?? 'smart';
+  const updateVisibleLabels = React.useCallback(
+    (ids: Set<string>) =>
+      setVisibleLabels((previous) =>
+        previous.size === ids.size && [...ids].every((id) => previous.has(id)) ? previous : ids
+      ),
+    []
+  );
 
   const focusRoute = (routeId: string) => {
     const route = routes.find((r) => r.id === routeId);
@@ -1067,6 +1128,23 @@ export function MapView({
   );
 
   const selectedRouteStatus = selectedRoute ? computeRouteStatus(selectedRoute) : 'unknown';
+  const mapLabels = React.useMemo(
+    () =>
+      pops
+        .filter((p) => p.showName !== false)
+        .map((pop) => ({
+          id: pop.id,
+          name: pop.name || 'Sem nome',
+          lat: pop.lat,
+          lng: pop.lng,
+          iconSize: Math.min(
+            256,
+            Math.max(8, (pop.iconSizePx ?? 32) * (pop.iconScaleMode === 'fixed' ? 1 : mapZoomScale))
+          ),
+          priority: selectedPopId === pop.id ? 3 : computePopStatus(pop) === 'down' ? 2 : 0,
+        })),
+    [pops, mapZoomScale, selectedPopId, computePopStatus]
+  );
   const selectedRouteStatusLabel =
     selectedRouteStatus === 'online'
       ? 'Online'
@@ -1169,13 +1247,6 @@ export function MapView({
       .sort((a, b) => (a.rxNumeric ?? Number.POSITIVE_INFINITY) - (b.rxNumeric ?? Number.POSITIVE_INFINITY))
       .slice(0, 3);
   }, [getMetricValue, getNumericValue, routes]);
-
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setDashTick((prev) => (prev + transportAnimationSpeed) % 4000);
-    }, 60);
-    return () => clearInterval(interval);
-  }, [transportAnimationSpeed]);
 
   React.useEffect(() => {
     if (downRoutes.length <= 1) {
@@ -1426,6 +1497,7 @@ export function MapView({
           <div
             className={presentation.backdrop}
             role="dialog"
+            aria-modal="true"
             aria-label="Detalhes da rota"
             style={{
               position: 'absolute',
@@ -1453,12 +1525,11 @@ export function MapView({
                 overflow: 'hidden',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className={presentation.dialogHeading}>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedRoute.name || 'Sem nome'}</div>
-                  <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
-                    Distancia total: {selectedRouteDistance.toFixed(2)} km
-                  </div>
+                  <small>ROTA DE TRANSPORTE</small>
+                  <h3>{selectedRoute.name || 'Sem nome'}</h3>
+                  <small>Distancia total: {selectedRouteDistance.toFixed(2)} km</small>
                 </div>
                 <button
                   onClick={() => setSelectedRouteId(null)}
@@ -1475,7 +1546,7 @@ export function MapView({
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <div className={presentation.equipmentGrid}>
                 <div
                   style={{
                     border: `1px solid ${theme.colors.border.weak}`,
@@ -1818,7 +1889,7 @@ export function MapView({
                                     (leftRx !== null && leftRx <= -35) || (rightRx !== null && rightRx <= -35);
                                   const y = idx * (rowHeight + rowGap) + rowHeight / 2;
                                   const width = Math.max(0, linkLayout.rightX - linkLayout.leftX);
-                                  const color = down ? '#ef4444' : '#22c55e';
+                                  const color = down ? theme.colors.error.text : theme.colors.success.text;
                                   return (
                                     <g key={`link-${side}`}>
                                       <line
@@ -1860,6 +1931,10 @@ export function MapView({
 
         {rxHistory && (
           <div
+            className={presentation.backdrop}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Histórico do sinal RX"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1937,6 +2012,7 @@ export function MapView({
           <div
             className={presentation.backdrop}
             role="dialog"
+            aria-modal="true"
             aria-label="Equipamentos do POP"
             style={{
               position: 'absolute',
@@ -1964,12 +2040,13 @@ export function MapView({
                 overflow: 'hidden',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className={presentation.dialogHeading}>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedPop.name || 'Sem nome'}</div>
-                  <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
+                  <small>PONTO DE PRESENÇA · {selectedPop.equipments.length} EQUIPAMENTOS</small>
+                  <h3>{selectedPop.name || 'Sem nome'}</h3>
+                  <small>
                     {selectedPop.lat.toFixed(4)}, {selectedPop.lng.toFixed(4)}
-                  </div>
+                  </small>
                 </div>
                 <button
                   onClick={() => setSelectedPopId(null)}
@@ -1986,7 +2063,7 @@ export function MapView({
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+              <div className={presentation.equipmentGrid}>
                 {(selectedPop.equipments ?? []).length === 0 ? (
                   <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum equipamento cadastrado</div>
                 ) : (
@@ -2023,47 +2100,38 @@ export function MapView({
                     return (
                       <div
                         key={equipment.id}
+                        className={presentation.equipmentCard}
                         style={{
-                          border: `1px solid ${theme.colors.border.weak}`,
-                          borderRadius: 10,
-                          padding: 12,
-                          background: theme.colors.background.secondary,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 8,
+                          borderTopColor:
+                            status === 'online'
+                              ? theme.colors.success.text
+                              : status === 'down'
+                                ? theme.colors.error.text
+                                : theme.colors.text.secondary,
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div className={presentation.equipmentHeading}>
                           <div>
-                            <div style={{ fontSize: 13, fontWeight: 700 }}>{equipment.name || 'Equipamento'}</div>
-                            <div
-                              style={{
-                                fontSize: theme.typography.bodySmall.fontSize,
-                                color: theme.colors.text.secondary,
-                              }}
-                            >
-                              {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
+                            <img
+                              alt=""
+                              src={`public/plugins/jakson-jmap-panel/img/${equipment.type?.toLowerCase().includes('olt') ? 'pop-olt.svg' : equipment.type?.toLowerCase().includes('switch') ? 'sw.png' : 'pop-router.svg'}`}
+                            />
+                            <div>
+                              <strong>{equipment.name || 'Equipamento'}</strong>
+                              <small>
+                                {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
+                              </small>
                             </div>
                           </div>
                           <span
+                            className={presentation.statusBadge}
                             style={{
-                              display: 'inline-block',
-                              padding: '4px 10px',
-                              borderRadius: 999,
-                              fontSize: theme.typography.bodySmall.fontSize,
-                              fontWeight: 700,
-                              background:
+                              color:
                                 status === 'online'
-                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  ? theme.colors.success.text
                                   : status === 'down'
-                                    ? 'rgba(239, 68, 68, 0.15)'
-                                    : 'rgba(245, 158, 11, 0.15)',
-                              border:
-                                status === 'online'
-                                  ? '1px solid rgba(16, 185, 129, 0.35)'
-                                  : status === 'down'
-                                    ? '1px solid rgba(239, 68, 68, 0.35)'
-                                    : '1px solid rgba(245, 158, 11, 0.35)',
+                                    ? theme.colors.error.text
+                                    : theme.colors.text.secondary,
                             }}
                           >
                             {status === 'online' ? 'Online' : status === 'down' ? 'Down' : 'Sem dados'}
@@ -2113,12 +2181,12 @@ export function MapView({
                                     <span>{metric.name || 'Metrica'}</span>
                                     <span className={presentation.metricValue}>{value?.text ?? '--'}</span>
                                   </div>
-                                  <div style={{ marginTop: 6 }}>
+                                  <div className={presentation.trend}>
                                     <Sparkline
                                       values={series}
                                       width={240}
-                                      height={parseFloat(theme.spacing(5))}
-                                      color={theme.colors.success.main}
+                                      height={parseFloat(theme.spacing(3))}
+                                      color={theme.colors.primary.text}
                                     />
                                   </div>
                                 </div>
@@ -2141,8 +2209,19 @@ export function MapView({
           zoomSnap={0.25}
           zoomDelta={0.25}
           style={{ height: '100%', width: '100%' }}
-          className="jmap-map-container"
+          className={`jmap-map-container ${options.mapTone !== 'original' && !['google_satellite', 'google_hybrid', 'carto_dark'].includes(options.mapProvider) ? presentation.mutedMap : ''}`}
         >
+          {labelMode === 'smart' && (
+            <MapLabels
+              labels={mapLabels}
+              fontSize={parseFloat(String(theme.typography.bodySmall.fontSize))}
+              fontFamily={theme.typography.fontFamily}
+              maxWidth={parseFloat(theme.spacing(25))}
+              padding={parseFloat(theme.spacing(1))}
+              gap={parseFloat(theme.spacing(1))}
+              onVisible={updateVisibleLabels}
+            />
+          )}
           <CaptureLeafletView />
           <CaptureMapInteraction onInteract={() => {}} />
           <CaptureMapRef
@@ -2167,10 +2246,15 @@ export function MapView({
               return null;
             }
             const status = computeRouteStatus(route);
-            const statusColor =
-              status === 'online' ? route.colors.online : status === 'down' ? route.colors.down : route.colors.alert;
+            const statusColor = status === 'unknown' ? theme.colors.text.secondary : route.colors[status];
             const statusClass =
-              status === 'online' ? 'jmap-route--online' : status === 'down' ? 'jmap-route--down' : 'jmap-route--alert';
+              status === 'unknown'
+                ? 'jmap-route--unknown'
+                : status === 'online'
+                  ? 'jmap-route--online'
+                  : status === 'down'
+                    ? 'jmap-route--down'
+                    : 'jmap-route--alert';
             const modeClass = transportLineAnimation === 'static' ? 'jmap-route--mode-static' : 'jmap-route--mode-flow';
             const dashArray =
               transportLineAnimation === 'static' && status !== 'down'
@@ -2180,17 +2264,19 @@ export function MapView({
                   : status === 'down'
                     ? '6 8'
                     : '8 10';
-            const speed = status === 'online' ? 2 : status === 'down' ? 3.5 : 1.5;
-            const dashOffset = transportLineAnimation === 'flow' ? -(dashTick * speed) % 240 : 0;
             return (
               <React.Fragment key={route.id}>
+                <Polyline
+                  positions={route.points.map((p) => [p.lat, p.lng])}
+                  interactive={false}
+                  pathOptions={{ color: theme.colors.background.canvas, opacity: 0.8, weight: transportLineWeight + 3 }}
+                />
                 <Polyline
                   positions={route.points.map((p) => [p.lat, p.lng])}
                   pathOptions={{
                     color: statusColor,
                     className: `jmap-route ${statusClass} ${modeClass}`.trim(),
                     dashArray,
-                    dashOffset: dashOffset ? `${dashOffset}` : undefined,
                     weight: transportLineWeight,
                     lineCap: 'round',
                     lineJoin: 'round',
@@ -2234,14 +2320,19 @@ export function MapView({
             const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
             const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
             const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
-            const tooltipOffsetY = -(Math.round(iconSizePx / 2) + Math.max(8, Math.round(iconSizePx * 0.4)));
-            const tooltipFontSize = Math.max(9, Math.min(18, Math.round(11 * Math.sqrt(iconZoomScale))));
+            const tooltipOffsetX = Math.round(iconSizePx / 2) + parseFloat(theme.spacing(1));
             const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
             const statusClass = popStatus === 'down' ? 'jmap-pop-icon--down' : '';
+            const popColor =
+              popStatus === 'down'
+                ? theme.colors.error.text
+                : popStatus === 'online'
+                  ? theme.colors.success.text
+                  : theme.colors.text.secondary;
             const icon = iconUrl
               ? L.divIcon({
                   className: '',
-                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
+                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;border-color:${popColor};">
                   <img class="jmap-pop-icon__img" style="width:${iconInnerSizePx}px;height:${iconInnerSizePx}px;" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
                  </div>`,
                   iconSize: [iconSizePx, iconSizePx],
@@ -2269,27 +2360,33 @@ export function MapView({
                     }}
                   >
                     <Tooltip
-                      className="jmap-tooltip"
-                      direction="top"
-                      permanent
-                      offset={[0, tooltipOffsetY]}
+                      key={`${labelMode}-${visibleLabels.has(pop.id)}`}
+                      className={`jmap-tooltip ${presentation.popLabel}`}
+                      direction="right"
+                      permanent={labelMode === 'smart' ? visibleLabels.has(pop.id) : labelMode !== 'hover'}
+                      offset={[tooltipOffsetX, 0]}
                       interactive={false}
                     >
-                      <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
-                      <div
-                        style={{
-                          color:
-                            popStatus === 'down'
-                              ? theme.colors.error.text
-                              : popStatus === 'online'
-                                ? theme.colors.success.text
-                                : theme.colors.text.secondary,
-                          fontSize: theme.typography.bodySmall.fontSize,
-                        }}
-                      >
-                        {pop.equipments.length} equipamento(s) ·{' '}
-                        {popStatus === 'down' ? 'Indisponível' : popStatus === 'online' ? 'Online' : 'Sem dados'}
+                      <div className={presentation.labelTitle}>
+                        <span style={{ background: popColor }} />
+                        {pop.name || 'Sem nome'}
                       </div>
+                      {(labelMode === 'details' || labelMode === 'hover') && (
+                        <div
+                          style={{
+                            color:
+                              popStatus === 'down'
+                                ? theme.colors.error.text
+                                : popStatus === 'online'
+                                  ? theme.colors.success.text
+                                  : theme.colors.text.secondary,
+                            fontSize: theme.typography.bodySmall.fontSize,
+                          }}
+                        >
+                          {pop.equipments.length} equipamento(s) ·{' '}
+                          {popStatus === 'down' ? 'Indisponível' : popStatus === 'online' ? 'Online' : 'Sem dados'}
+                        </div>
+                      )}
                     </Tooltip>
                   </Marker>
                 )}

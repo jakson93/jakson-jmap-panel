@@ -29,6 +29,49 @@ export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions
     defaultValue: [],
   });
 
+  builder.addSelect({
+    path: 'mapLabelMode',
+    name: 'Rótulos dos POPs',
+    description: 'Inteligente evita sobreposição. Os detalhes continuam disponíveis ao selecionar o POP.',
+    category: ['Visualização'],
+    defaultValue: 'smart',
+    settings: {
+      options: [
+        { label: 'Inteligente (sem sobreposição)', value: 'smart' },
+        { label: 'Somente nome', value: 'name' },
+        { label: 'Nome, equipamentos e status', value: 'details' },
+        { label: 'Ao passar o mouse', value: 'hover' },
+      ],
+    },
+  });
+  builder.addRadio({
+    path: 'mapTone',
+    name: 'Contraste do fundo',
+    description: 'Suave reduz o destaque das ruas e cidades para priorizar a rede.',
+    category: ['Visualização'],
+    defaultValue: 'muted',
+    settings: {
+      options: [
+        { label: 'Suave', value: 'muted' },
+        { label: 'Original', value: 'original' },
+      ],
+    },
+  });
+  builder.addSelect({
+    path: 'topologyRouteStyle',
+    name: 'Traçado na topologia',
+    description: 'Aplica-se a ligações sem desvios manuais. O caminho geográfico permanece independente.',
+    category: ['Visualização'],
+    defaultValue: 'curve',
+    settings: {
+      options: [
+        { label: 'Curvas suaves', value: 'curve' },
+        { label: 'Direto', value: 'direct' },
+        { label: 'Ortogonal', value: 'orthogonal' },
+      ],
+    },
+  });
+
   builder.addCustomEditor({
     id: 'pops',
     path: 'pops',

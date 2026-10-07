@@ -141,6 +141,9 @@ export type Pop = {
 
 export interface PanelOptions {
   viewMode?: NetworkView;
+  mapLabelMode?: 'smart' | 'name' | 'details' | 'hover';
+  mapTone?: 'muted' | 'original';
+  topologyRouteStyle?: 'curve' | 'direct' | 'orthogonal';
   centerLat: number;
   centerLng: number;
   zoom: number;

@@ -3,10 +3,21 @@ import L from 'leaflet';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { useStyles2, useTheme2 } from '@grafana/ui';
-import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import {
+  MapContainer,
+  Marker,
+  Pane,
+  Polyline,
+  Rectangle,
+  TileLayer,
+  Tooltip,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { CanvasPoint, MapProvider, NetworkView, PanelOptions } from '../types';
-import { NetworkNode, insertBend, routePath } from '../networkModel';
+import { CanvasPoint, MapProvider, NetworkView, PanelOptions, Route } from '../types';
+import { NetworkNode, insertBend, routeEndpoint, routePath } from '../networkModel';
+import { topologyNodes, topologyPaths } from '../networkPresentation';
 import { Readings, equipmentStatus, popStatus, routeStatus, statusColor, statusLabel } from '../networkTelemetry';
 
 export type EditTool = 'move' | 'connect' | 'route';
@@ -25,6 +36,8 @@ type Props = {
   onPath: (id: string, points: CanvasPoint[]) => void;
   onConnect: (source: NetworkNode, target: NetworkNode) => void;
   onReady: (map: L.Map) => void;
+  expanded: ReadonlySet<string>;
+  onTogglePop: (id: string) => void;
 };
 
 const escape = (text: string) =>
@@ -85,6 +98,10 @@ function MapLifecycle({
 }) {
   const map = useMap();
   const initial = React.useRef(initialNodes);
+  React.useEffect(() => {
+    initial.current = initialNodes;
+  }, [initialNodes]);
+  const nodeSignature = initialNodes.map((node) => node.id).join('|');
   const ready = React.useRef(onReady);
   useMapEvents({
     zoomend: () => onZoom(map.getZoom()),
@@ -97,16 +114,20 @@ function MapLifecycle({
   });
   React.useEffect(() => {
     ready.current(map);
-    if (view === 'topology' && initial.current.length) {
-      map.fitBounds(L.latLngBounds(initial.current.map((n) => latLng(n.position, view))), {
-        padding: [100, 90],
-        maxZoom: 0,
-      });
-    }
     const resize = new ResizeObserver(() => map.invalidateSize());
     resize.observe(map.getContainer());
     return () => resize.disconnect();
   }, [map, view]);
+  React.useEffect(() => {
+    if (view === 'topology' && initial.current.length) {
+      map.fitBounds(L.latLngBounds(initial.current.map((n) => latLng(n.position, view))), {
+        paddingTopLeft: [125, 200],
+        paddingBottomRight: [125, 120],
+        maxZoom: 0,
+        animate: false,
+      });
+    }
+  }, [map, view, nodeSignature]);
   return null;
 }
 
@@ -126,6 +147,8 @@ export function NetworkCanvas(props: Props) {
     onPath,
     onConnect,
     onReady,
+    expanded,
+    onTogglePop,
   } = props;
   const theme = useTheme2();
   const styles = useStyles2(getStyles);
@@ -135,6 +158,28 @@ export function NetworkCanvas(props: Props) {
   const [pointer, setPointer] = React.useState<CanvasPoint>();
   const [zoom, setZoom] = React.useState(0);
   const mapRef = React.useRef<L.Map>();
+  const visibleNodes = React.useMemo(
+    () => (view === 'topology' ? topologyNodes(nodes, expanded) : nodes),
+    [nodes, expanded, view]
+  );
+  const paths = React.useMemo(
+    () => topologyPaths(options, nodes, expanded, editing),
+    [options, nodes, expanded, editing]
+  );
+  const groups = React.useMemo(() => {
+    const index = new Map(
+      (options.pops ?? []).map((pop) => [pop.id, { pop, members: [] as NetworkNode[], localRoutes: [] as Route[] }])
+    );
+    nodes.forEach((node) => index.get(node.pop.id)?.members.push(node));
+    (options.routes ?? []).forEach((route) => {
+      const source = routeEndpoint(route, 'source', options.pops);
+      const target = routeEndpoint(route, 'target', options.pops);
+      if (source && target && source.popId === target.popId) {
+        index.get(source.popId)?.localRoutes.push(route);
+      }
+    });
+    return index;
+  }, [options.pops, options.routes, nodes]);
   const cancel = React.useCallback(() => {
     connectionRef.current = undefined;
     setConnection(undefined);
@@ -155,8 +200,6 @@ export function NetworkCanvas(props: Props) {
     };
   }, [editing, tool]);
   const tile = tileConfig(options.mapProvider);
-  const markerWidth = parseFloat(theme.spacing(view === 'map' ? 18 : 22));
-  const markerHeight = parseFloat(theme.spacing(11));
   const markerScale = view === 'topology' ? Math.min(1, 2 ** zoom) : 1;
   const handleSize = parseFloat(theme.spacing(1.5));
   const handleIcon = L.divIcon({
@@ -184,11 +227,11 @@ export function NetworkCanvas(props: Props) {
         maxZoom={view === 'map' ? 20 : 2}
         zoomControl={false}
         doubleClickZoom={false}
-        className={styles.map}
+        className={`${styles.map} ${view === 'topology' ? styles.topology : options.mapTone !== 'original' ? styles.muted : ''}`}
       >
         <MapLifecycle
           view={view}
-          initialNodes={nodes}
+          initialNodes={visibleNodes}
           onPointer={(p) => {
             if (connectionRef.current) {
               setPointer(p);
@@ -205,8 +248,39 @@ export function NetworkCanvas(props: Props) {
           }}
         />
         {view === 'map' && <TileLayer {...tile} maxZoom={20} />}
+        {view === 'topology' && (
+          <Pane name="jmap-groups" style={{ zIndex: 250, pointerEvents: 'none' }}>
+            {[...groups.values()]
+              .filter(({ pop, members }) => expanded.has(pop.id) && members.length > 1)
+              .map(({ pop, members }) => {
+                const paddingX = parseFloat(theme.spacing(16));
+                const paddingY = parseFloat(theme.spacing(9));
+                const left = Math.min(...members.map((n) => n.position.x)) - paddingX;
+                const right = Math.max(...members.map((n) => n.position.x)) + paddingX;
+                const top = Math.min(...members.map((n) => n.position.y)) - paddingY;
+                const bottom = Math.max(...members.map((n) => n.position.y)) + paddingY;
+                return (
+                  <Rectangle
+                    key={pop.id}
+                    bounds={[
+                      [-bottom, left],
+                      [-top, right],
+                    ]}
+                    interactive={false}
+                    pathOptions={{
+                      color: theme.colors.border.medium,
+                      weight: 1,
+                      fillColor: theme.colors.background.secondary,
+                      fillOpacity: 0.65,
+                      className: styles.group,
+                    }}
+                  />
+                );
+              })}
+          </Pane>
+        )}
         {(options.routes ?? []).map((route) => {
-          const path = routePath(route, options, view, nodes);
+          const path = view === 'topology' ? (paths.get(route.id) ?? []) : routePath(route, options, view, nodes);
           if (path.length < 2) {
             return null;
           }
@@ -228,14 +302,36 @@ export function NetworkCanvas(props: Props) {
             <React.Fragment key={route.id}>
               <Polyline
                 positions={path.map((p) => latLng(p, view))}
+                interactive={false}
+                pathOptions={{
+                  color: theme.colors.background.canvas,
+                  opacity: 0.85,
+                  weight: (options.transportLineWeight ?? 3) + 4,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+              <Polyline
+                positions={path.map((p) => latLng(p, view))}
                 pathOptions={{
                   color,
                   weight: options.transportLineWeight ?? 3,
+                  lineCap: 'round',
+                  lineJoin: 'round',
                   dashArray: status === 'down' || status === 'unknown' ? '6 8' : undefined,
-                  className: options.transportLineAnimation === 'flow' && status === 'online' ? styles.flow : undefined,
+                  className:
+                    options.transportLineAnimation !== 'static' && status === 'online' ? styles.flow : undefined,
+                  ...(options.transportLineAnimation !== 'static' && status === 'online' ? { dashArray: '14 8' } : {}),
                 }}
                 eventHandlers={{ click }}
-              />
+              >
+                <Tooltip className={styles.tooltip} sticky direction="top">
+                  <strong>{route.name}</strong>
+                  <br />
+                  {statusLabel[status]}
+                  {route.capacityManualText && <> · {route.capacityManualText}</>}
+                </Tooltip>
+              </Polyline>
               <Polyline
                 positions={path.map((p) => latLng(p, view))}
                 pathOptions={{ color, opacity: 0, weight: 18 }}
@@ -277,7 +373,9 @@ export function NetworkCanvas(props: Props) {
             interactive={false}
           />
         )}
-        {nodes.map((node) => {
+        {visibleNodes.map((node) => {
+          const markerWidth = parseFloat(theme.spacing(node.equipment ? 24 : 30));
+          const markerHeight = parseFloat(theme.spacing(node.equipment ? 14 : 16));
           const status = node.equipment ? equipmentStatus(node.equipment, readings) : popStatus(node.pop, readings);
           const type = node.equipment?.type?.toLowerCase() ?? '';
           const fallback = type.includes('olt')
@@ -293,11 +391,17 @@ export function NetworkCanvas(props: Props) {
               ? supplied
               : `public/plugins/jakson-jmap-panel/img/${fallback}`;
           const showName = view === 'topology' || node.pop.showName !== false;
+          const group = groups.get(node.pop.id);
+          const internal = group?.localRoutes.length ?? 0;
+          const failures = group?.localRoutes.filter((r) => routeStatus(r, readings) === 'down').length ?? 0;
+          const summary = node.equipment
+            ? `${node.equipment.type || 'Equipamento'} · ${node.pop.name}`
+            : `${node.pop.equipments.length} equipamentos${internal ? ` · ${internal} links internos` : ''}`;
           const icon = L.divIcon({
             className: `jmap-node ${styles.node} ${selectedNode === node.id || connection?.id === node.id ? styles.selected : ''}`,
             iconSize: [markerWidth * markerScale, markerHeight * markerScale],
             iconAnchor: [(markerWidth * markerScale) / 2, (markerHeight * markerScale) / 2],
-            html: `<div class="${styles.nodeCard}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left"><img src="${escape(imageUrl)}" alt="" draggable="false" /><strong>${showName ? escape(node.name || 'Sem nome') : ''}</strong><span style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}${node.equipment ? ` · ${escape(node.pop.name)}` : ' · POP'}</span></div>`,
+            html: `<div class="${styles.nodeCard} ${!node.equipment ? styles.popCard : ''}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left;border-top-color:${statusColor(status, theme)}"><div class="${styles.identity}"><img src="${escape(imageUrl)}" alt="" draggable="false" /><div><small>${node.equipment ? 'EQUIPAMENTO' : 'PONTO DE PRESENÇA'}</small><strong>${showName ? escape(node.name || 'Sem nome') : ''}</strong></div></div><span class="${styles.nodeStatus}" style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}</span><span>${escape(summary)}</span>${!node.equipment ? `<small class="${styles.hint}" style="color:${failures ? theme.colors.error.text : theme.colors.text.secondary}">${failures ? `${failures} link(s) interno(s) em falha` : expanded.has(node.pop.id) ? 'Equipamentos expandidos' : 'Selecione para expandir'}</small>` : ''}</div>`,
           });
           return (
             <Marker
@@ -338,6 +442,11 @@ export function NetworkCanvas(props: Props) {
                 dragend: (e) => {
                   onMove(node, point(e.target.getLatLng(), view));
                 },
+                dblclick: () => {
+                  if (view === 'topology' && !node.equipment && !editing) {
+                    onTogglePop(node.pop.id);
+                  }
+                },
               }}
             />
           );
@@ -353,7 +462,7 @@ function getStyles(theme: GrafanaTheme2) {
     map: css({
       height: '100%',
       width: '100%',
-      '&&': { background: theme.colors.background.canvas },
+      '&&': { backgroundColor: theme.colors.background.canvas },
       fontFamily: theme.typography.fontFamily,
       '.leaflet-control-attribution': {
         background: theme.colors.background.primary,
@@ -361,22 +470,45 @@ function getStyles(theme: GrafanaTheme2) {
       },
       '.leaflet-control-attribution a': { color: theme.colors.text.link },
     }),
+    topology: css({
+      '&&': {
+        backgroundImage: `radial-gradient(${theme.colors.border.medium} 1px, transparent 1px)`,
+        backgroundSize: `${theme.spacing(3)} ${theme.spacing(3)}`,
+      },
+    }),
+    muted: css({
+      '.leaflet-tile-pane': {
+        filter: theme.isDark ? 'invert(1) hue-rotate(180deg) saturate(0.2) brightness(0.65)' : 'saturate(0.25)',
+      },
+    }),
+    group: css({ strokeDasharray: '5 5' }),
+    tooltip: css({
+      '&&': {
+        background: theme.colors.background.primary,
+        color: theme.colors.text.primary,
+        border: `1px solid ${theme.colors.border.medium}`,
+        padding: theme.spacing(1, 1.5),
+        boxShadow: theme.shadows.z2,
+        fontSize: theme.typography.bodySmall.fontSize,
+      },
+    }),
     node: css({
       '&:focus-visible': { outline: `2px solid ${theme.colors.primary.text}`, outlineOffset: theme.spacing(0.5) },
     }),
     nodeCard: css({
       '&&': { display: 'flex' },
-      alignItems: 'center',
+      alignItems: 'stretch',
       flexDirection: 'column',
-      justifyContent: 'center',
-      gap: theme.spacing(0.25),
+      justifyContent: 'space-between',
+      gap: theme.spacing(0.5),
       color: theme.colors.text.primary,
-      background: theme.colors.background.primary,
+      background: `linear-gradient(135deg, ${theme.colors.background.secondary}, ${theme.colors.background.primary})`,
       borderRadius: theme.shape.radius.default,
       border: `1px solid ${theme.colors.border.medium}`,
-      padding: theme.spacing(0.75),
-      boxShadow: theme.shadows.z1,
-      img: { width: theme.spacing(5), height: theme.spacing(4), objectFit: 'contain' },
+      borderTopWidth: theme.spacing(0.25),
+      padding: theme.spacing(1.25, 1.5),
+      boxShadow: theme.shadows.z2,
+      img: { width: theme.spacing(4), height: theme.spacing(4), objectFit: 'contain' },
       strong: {
         fontSize: theme.typography.body.fontSize,
         overflow: 'hidden',
@@ -391,8 +523,22 @@ function getStyles(theme: GrafanaTheme2) {
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
       },
+      small: { fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary },
       '&:focus-visible': { outline: `2px solid ${theme.colors.primary.text}`, outlineOffset: theme.spacing(0.5) },
     }),
+    identity: css({
+      display: 'flex',
+      alignItems: 'center',
+      gap: theme.spacing(1),
+      '> div': { display: 'flex', flexDirection: 'column', minWidth: 0 },
+      small: { letterSpacing: '0.06em', fontSize: theme.typography.bodySmall.fontSize },
+    }),
+    popCard: css({
+      strong: { fontSize: theme.typography.h5.fontSize, fontWeight: theme.typography.fontWeightMedium },
+      img: { width: theme.spacing(5), height: theme.spacing(5) },
+    }),
+    nodeStatus: css({ fontWeight: theme.typography.fontWeightMedium }),
+    hint: css({ display: 'block', borderTop: `1px solid ${theme.colors.border.weak}`, paddingTop: theme.spacing(0.5) }),
     selected: css({
       '> div': {
         borderColor: theme.colors.primary.text,

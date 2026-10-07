@@ -18,7 +18,7 @@ export const validPoint = (point?: CanvasPoint): point is CanvasPoint =>
 export function networkNodes(options: PanelOptions, view: NetworkView): NetworkNode[] {
   return (options.pops ?? [])
     .flatMap((pop, index) => {
-      const group = pop.topologyPosition ?? { x: 180 + (index % 3) * 380, y: 150 + Math.floor(index / 3) * 380 };
+      const group = pop.topologyPosition ?? { x: 240 + (index % 3) * 620, y: 180 + Math.floor(index / 3) * 500 };
       const popNode: NetworkNode = {
         id: endpointKey({ popId: pop.id }),
         endpoint: { popId: pop.id },
@@ -42,7 +42,7 @@ export function networkNodes(options: PanelOptions, view: NetworkView): NetworkN
             equipment,
             position: validPoint(equipment.topologyPosition)
               ? equipment.topologyPosition
-              : { x: group.x + (i % 2) * 180 - 80, y: group.y + 125 + Math.floor(i / 2) * 125 },
+              : { x: group.x + (i % 2) * 230 - 115, y: group.y + 150 + Math.floor(i / 2) * 125 },
           };
         }),
       ];
@@ -91,7 +91,24 @@ export function moveNode(
       return { ...pop, lat: point.y, lng: point.x };
     }
     if (!endpoint.equipmentId) {
-      return { ...pop, topologyPosition: point };
+      const previous = networkNodes(options, 'topology').find((node) =>
+        sameEndpoint(node.endpoint, endpoint)
+      )?.position;
+      return {
+        ...pop,
+        topologyPosition: point,
+        equipments: pop.equipments.map((equipment) =>
+          previous && validPoint(equipment.topologyPosition)
+            ? {
+                ...equipment,
+                topologyPosition: {
+                  x: equipment.topologyPosition.x + point.x - previous.x,
+                  y: equipment.topologyPosition.y + point.y - previous.y,
+                },
+              }
+            : equipment
+        ),
+      };
     }
     return {
       ...pop,
@@ -220,4 +237,30 @@ export function insertBend(path: CanvasPoint[], point: CanvasPoint): CanvasPoint
     }
   }
   return [...path.slice(0, index), point, ...path.slice(index)];
+}
+
+/** Explicit draft action: only topology positions change; monitoring stays intact. */
+export function organizeTopology(options: PanelOptions, columnGap: number, rowGap: number): PanelOptions {
+  const columns = Math.min(3, Math.max(1, options.pops.length));
+  const heights = options.pops.map((pop) => rowGap * (2 + Math.ceil(pop.equipments.length / 2)));
+  let rowY = rowGap;
+  const pops: Pop[] = [];
+  for (let row = 0; row < options.pops.length; row += columns) {
+    options.pops.slice(row, row + columns).forEach((pop, column) => {
+      const centerX = columnGap + column * columnGap * 2.5;
+      pops.push({
+        ...pop,
+        topologyPosition: { x: centerX, y: rowY },
+        equipments: pop.equipments.map((equipment, i) => ({
+          ...equipment,
+          topologyPosition: {
+            x: centerX + (i % 2 ? 0.5 : -0.5) * columnGap,
+            y: rowY + rowGap * (1 + Math.floor(i / 2)),
+          },
+        })),
+      });
+    });
+    rowY += Math.max(...heights.slice(row, row + columns));
+  }
+  return { ...options, pops };
 }

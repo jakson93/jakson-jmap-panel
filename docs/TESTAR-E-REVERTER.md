@@ -1,4 +1,14 @@
-# Testar JMAP 1.1.0 antes de produção
+# Testar JMAP 1.2.0 antes de produção
+
+## Revisão visual 1.2.0
+
+- A topologia começa com os POPs recolhidos. Selecione um POP e use **Expandir equipamentos**; **Expandir POPs** abre todos. As ligações internas permanecem no inventário e são desenhadas quando o grupo é expandido.
+- Ao selecionar uma rota, o inspetor identifica os equipamentos reais de origem e destino. Recolher POPs não altera as associações nem as métricas.
+- Em **Editar layout**, todos os equipamentos ficam disponíveis. **Organizar grupos** ajusta posições em rascunho; use **Desfazer** ou **Cancelar** para reverter. Mover um POP leva consigo equipamentos posicionados manualmente. Desvios manuais das rotas são mantidos.
+- Em **Visualização**, **Rótulos dos POPs → Inteligente** reduz sobreposição e prioriza falhas. Há também somente nome, apresentação detalhada e hover. **Contraste do fundo → Original** mantém as cores do provedor.
+- **Traçado na topologia** oferece curvas, linhas diretas e ortogonais para rotas sem pontos manuais. No editor, o caminho é exibido com seus pontos reais para permitir ajustes precisos.
+- Confira CPU, memória, temperatura, uptime, métricas personalizadas, observações, RX/TX, tráfego, capacidade, incidentes, interfaces, trunks e histórico RX na homologação. A demonstração inclui exemplos desses detalhes.
+- Nenhuma alteração foi feita no ID `jakson-jmap-panel`.
 
 A branch `codex/mapa-topologia` preserva a visualização original do mapa e seus detalhes de POPs, rotas, incidentes, gráficos e trunks. A aparência dos rótulos e detalhes foi refinada dentro do mapa. A topologia é uma visualização alternativa, com edição em rascunho. O ID continua `jakson-jmap-panel`.
 

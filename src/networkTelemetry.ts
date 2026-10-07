@@ -18,7 +18,13 @@ export function readTelemetry(series: DataFrame[], theme: GrafanaTheme2, timeZon
     const times = Array.from(frame.fields.find((field) => field.type === FieldType.time)?.values ?? []).map(Number);
     for (const field of fields) {
       const values: unknown[] = Array.from(field.values);
-      const raw = [...values].reverse().find((v) => v !== null && v !== undefined && v !== '');
+      let raw: unknown;
+      for (let i = values.length - 1; i >= 0; i--) {
+        if (values[i] !== null && values[i] !== undefined && values[i] !== '') {
+          raw = values[i];
+          break;
+        }
+      }
       if (raw === undefined) {
         continue;
       }
@@ -67,7 +73,7 @@ export function equipmentStatus(equipment: PopEquipment, readings: Readings): St
 }
 
 export function popStatus(pop: Pop, readings: Readings): Status {
-  const statuses = (pop.equipments ?? []).map((e) => equipmentStatus(e, readings));
+  const statuses = (pop.equipments ?? []).filter((e) => e.statusItem?.trim()).map((e) => equipmentStatus(e, readings));
   if (statuses.includes('down')) {
     return 'down';
   }

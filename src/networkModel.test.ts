@@ -4,6 +4,7 @@ import {
   insertBend,
   moveNode,
   networkNodes,
+  organizeTopology,
   routeEndpoint,
   routePath,
   updateRoutePath,
@@ -128,4 +129,26 @@ test('inserts a new bend on the closest segment, including zero-length segments'
       { x: 1, y: 0 }
     )
   ).toHaveLength(3);
+});
+
+test('moving a POP in topology carries manually placed equipment while preserving monitoring and geographic routes', () => {
+  const current = options();
+  current.pops[0].topologyPosition = { x: 200, y: 100 };
+  current.pops[0].equipments[0].topologyPosition = { x: 150, y: 250 };
+  const next = moveNode(current, { popId: 'p1' }, { x: 400, y: 300 }, 'topology');
+  expect(next.pops[0].equipments[0].topologyPosition).toEqual({ x: 350, y: 450 });
+  expect(next.pops[0].lat).toBe(current.pops[0].lat);
+  expect(next.routes).toEqual(current.routes);
+  expect(current.pops[0].equipments[0].topologyPosition).toEqual({ x: 150, y: 250 });
+});
+
+test('organizing a crowded topology preserves geographic coordinates, route bends and all monitoring options', () => {
+  const current = options();
+  const next = organizeTopology(current, 240, 160);
+  expect(next.routes).toEqual(current.routes);
+  expect(next.pops[0].lat).toBe(current.pops[0].lat);
+  expect(next.pops[0].equipments[0].name).toBe(current.pops[0].equipments[0].name);
+  expect(next.pops[0].equipments[0].topologyPosition).toEqual({ x: 120, y: 320 });
+  expect(next.pops[1].topologyPosition?.x).toBe(840);
+  expect(current.pops[0].equipments[0].topologyPosition).toBeUndefined();
 });
