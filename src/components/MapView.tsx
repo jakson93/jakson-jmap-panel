@@ -1225,7 +1225,7 @@ export function MapView({
       ref={containerRef}
       className={presentation.root}
       data-testid="jmap-original-map"
-      style={{ height: '100%', width: '100%', display: 'flex' }}
+      style={{ height: '100%', minHeight: tools ? theme.spacing(48) : undefined, width: '100%', display: 'flex' }}
     >
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
         {tools && <div className={presentation.tools}>{tools}</div>}
