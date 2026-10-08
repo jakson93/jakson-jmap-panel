@@ -170,6 +170,11 @@ export interface PanelOptions {
   viewMode?: NetworkView;
   mapLabelMode?: 'smart' | 'name' | 'details' | 'hover';
   mapTone?: 'muted' | 'original';
+  topologyPopStyle?: 'icon' | 'card';
+  fireEnabled?: boolean;
+  fireRadiusKm?: number;
+  fireWindowHours?: number;
+  fireRefreshSeconds?: number;
   topologyRouteStyle?: 'curve' | 'direct' | 'orthogonal';
   centerLat: number;
   centerLng: number;

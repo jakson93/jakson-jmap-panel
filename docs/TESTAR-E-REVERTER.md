@@ -1,8 +1,8 @@
-# Testar JMAP 1.3.1 antes de produção
+# Testar JMAP 1.4.0 antes de produção
 
 
 
-## Compatibilidade das rotas do mapa na versão 1.3.1
+## Compatibilidade das rotas do mapa na versão 1.4.0
 
 As duas visualizações usam o mesmo cadastro de rotas. Alternar para **Topologia** não exige recadastrar interfaces, trunks, sinais RX/TX ou métricas extras. Selecione uma rota para consultar essas informações no resumo lateral; **Detalhes completos** mantém os gráficos e o histórico RX.
 
@@ -31,12 +31,12 @@ O dashboard sintético é histórico e tem período fixo; não representa coleta
 
 ### ZIP pronto para Portainer
 
-[Baixar build 1.3.1](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.1-20261008/jakson-jmap-panel-1.3.1.zip). Em uma pasta temporária do contêiner de homologação:
+[Baixar build 1.4.0](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.4.0-20261008/jakson-jmap-panel-1.4.0.zip). Em uma pasta temporária do contêiner de homologação:
 
 ```sh
-wget -O /tmp/jakson-jmap-panel-1.3.1.zip https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.1-20261008/jakson-jmap-panel-1.3.1.zip
-mkdir -p /tmp/jmap-1.3.1
-unzip /tmp/jakson-jmap-panel-1.3.1.zip -d /tmp/jmap-1.3.1
+wget -O /tmp/jakson-jmap-panel-1.4.0.zip https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.4.0-20261008/jakson-jmap-panel-1.4.0.zip
+mkdir -p /tmp/jmap-1.4.0
+unzip /tmp/jakson-jmap-panel-1.4.0.zip -d /tmp/jmap-1.4.0
 ```
 
 A pasta extraída `jakson-jmap-panel` contém `plugin.json`, `module.js` e `img`, sem precisar compilar. Guarde o plugin instalado e o JSON do dashboard antes de substituí-los. Instale o conteúdo no diretório de plugins de homologação, reinicie esse Grafana pelo Portainer e recarregue o navegador com `Ctrl+Shift+R`. Mantenha o volume de plugins persistente no contêiner.

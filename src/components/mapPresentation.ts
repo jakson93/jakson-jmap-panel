@@ -119,6 +119,10 @@ export function mapPresentation(theme: GrafanaTheme2) {
       },
     }),
     tools: css({
+      display: 'flex',
+      flexWrap: 'wrap',
+      justifyContent: 'flex-end',
+      gap: theme.spacing(1),
       position: 'absolute',
       top: theme.spacing(1.5),
       right: theme.spacing(1.5),

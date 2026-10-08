@@ -1,4 +1,5 @@
 import React from 'react';
+import { saveEditedItem } from '../optionMerge';
 import { DataFrame, FieldType, SelectableValue, StandardEditorProps } from '@grafana/data';
 import { Button, Field, Input, Modal, Select, Stack } from '@grafana/ui';
 
@@ -208,6 +209,8 @@ type State = {
   isDrawModalOpen: boolean;
   editingIndex: number | null;
   draftRoute: Route;
+  baseRoute?: Route;
+  saveError?: string;
   drawBackupPoints: RoutePoint[];
   drawMode: 'path' | 'arc';
   arcStart: RoutePoint | null;
@@ -245,6 +248,8 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
       isRouteModalOpen: true,
       editingIndex: null,
       draftRoute: createEmptyRoute(),
+      baseRoute: undefined,
+      saveError: '',
       drawBackupPoints: [],
       drawMode: 'path',
       arcStart: null,
@@ -263,6 +268,8 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
       isRouteModalOpen: true,
       editingIndex: index,
       draftRoute: cloneRoute(route),
+      baseRoute: structuredClone(route),
+      saveError: '',
       drawBackupPoints: [],
       drawMode: 'path',
       arcStart: null,
@@ -277,20 +284,22 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
   };
 
   saveRoute = () => {
-    const { draftRoute, editingIndex } = this.state;
-    const nextRoutes = [...this.routes];
-
-    const distanceKm =
-      draftRoute.distanceKm !== undefined ? draftRoute.distanceKm : computeDistanceKm(draftRoute.points);
-    const routeToSave = { ...draftRoute, distanceKm };
-
-    if (editingIndex === null) {
-      nextRoutes.push(routeToSave);
-    } else {
-      nextRoutes[editingIndex] = routeToSave;
+    const { draftRoute, baseRoute } = this.state;
+    const result = saveEditedItem(this.routes, baseRoute, draftRoute);
+    if (result.conflicts.length) {
+      this.setState({
+        saveError:
+          'Esta rota foi alterada ou removida durante a edição. Feche e reabra o cadastro para revisar as mudanças.',
+      });
+      return;
     }
-
-    this.updateRoutes(nextRoutes);
+    this.updateRoutes(
+      result.value.map((route) =>
+        route.id === draftRoute.id && route.distanceKm === undefined
+          ? { ...route, distanceKm: computeDistanceKm(route.points) }
+          : route
+      )
+    );
     this.setState({ isRouteModalOpen: false, editingIndex: null });
   };
 
@@ -968,6 +977,7 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
             <Button variant="secondary" onClick={this.closeRouteModal}>
               Cancelar
             </Button>
+            {this.state.saveError && <div role="alert">{this.state.saveError}</div>}
             <Button onClick={this.saveRoute}>Salvar rota</Button>
           </Modal.ButtonRow>
         </Stack>

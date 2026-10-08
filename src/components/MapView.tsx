@@ -1,5 +1,8 @@
 import React from 'react';
-import { migratePresetIcon } from '../iconUrl';
+import { ConfiguredMapView } from './ConfiguredMapView';
+import { FireControls, FireLayer } from './FireLayer';
+import { FireMonitoring } from './useFireMonitoring';
+import { normalizePopIconUrl } from '../iconUrl';
 import L from 'leaflet';
 import { DataFrame, FieldType, LoadingState, PanelData, TimeRange, TimeZone } from '@grafana/data';
 import { useTheme2, useStyles2, Icon } from '@grafana/ui';
@@ -21,7 +24,7 @@ import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMa
 import 'leaflet/dist/leaflet.css';
 
 import { PanelOptions, NetworkFilter, SavedNetworkView } from '../types';
-import { getLastMapView, setLastMapView } from '../mapState';
+import { setLastMapView } from '../mapState';
 
 type Props = {
   options: PanelOptions;
@@ -32,6 +35,7 @@ type Props = {
   initialRouteId?: string;
   initialPopId?: string;
   tools?: React.ReactNode;
+  fire?: FireMonitoring;
   filter?: NetworkFilter;
   onFilter?: (filter: NetworkFilter) => void;
   onRestore?: (view: SavedNetworkView) => void;
@@ -85,20 +89,6 @@ const toNumber = (value: unknown): number | null => {
 
 const escapeHtmlAttr = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-const normalizePopIconUrl = (value?: string) => {
-  const raw = migratePresetIcon(value?.trim() ?? '');
-  if (!raw) {
-    return '';
-  }
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:') || raw.startsWith('/')) {
-    return raw;
-  }
-  if (raw.startsWith('public/')) {
-    return `/${raw}`;
-  }
-  return raw;
-};
 
 const buildItemSeriesMap = (series: DataFrame[]) => {
   const values = new Map<string, number[]>();
@@ -713,6 +703,7 @@ export function MapView({
   initialRouteId,
   initialPopId,
   tools,
+  fire,
   filter: externalFilter,
   onFilter,
   onRestore,
@@ -934,9 +925,16 @@ export function MapView({
     if (!options.captureNow) {
       return;
     }
-    const v = getLastMapView();
-    if (v) {
-      onOptionsChange({ ...options, centerLat: v.lat, centerLng: v.lng, zoom: v.zoom, captureNow: false });
+    const ownMap = mapRef.current;
+    if (ownMap) {
+      const center = ownMap.getCenter();
+      onOptionsChange({
+        ...options,
+        centerLat: center.lat,
+        centerLng: center.lng,
+        zoom: ownMap.getZoom(),
+        captureNow: false,
+      });
       return;
     }
     onOptionsChange({ ...options, captureNow: false });
@@ -1228,7 +1226,17 @@ export function MapView({
       style={{ height: '100%', minHeight: tools ? theme.spacing(48) : undefined, width: '100%', display: 'flex' }}
     >
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-        {tools && <div className={presentation.tools}>{tools}</div>}
+        {(tools || fire?.enabled) && (
+          <div className={presentation.tools}>
+            {tools}
+            {fire && (
+              <FireControls
+                fire={fire}
+                onLocate={(lat, lng) => mapRef.current?.flyTo([lat, lng], Math.max(12, mapRef.current.getZoom()))}
+              />
+            )}
+          </div>
+        )}
         <style>
           {`
           .jmap-popup .leaflet-popup-content-wrapper,
@@ -2179,6 +2187,7 @@ export function MapView({
               onVisible={updateVisibleLabels}
             />
           )}
+          <ConfiguredMapView lat={centerLat} lng={centerLng} zoom={zoom} />
           <ViewportCapture onBounds={setViewport} />
           <CaptureLeafletView />
           <CaptureMapInteraction onInteract={() => {}} />
@@ -2390,6 +2399,7 @@ export function MapView({
                 </React.Fragment>
               );
             })}
+          {fire && <FireLayer fire={fire} />}
         </MapContainer>
         {!selectedRouteId && !selectedPopId && (
           <OperationalConsole

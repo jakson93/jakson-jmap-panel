@@ -7,6 +7,52 @@ import { SavedViewsEditor } from './components/SavedViewsEditor';
 import { PanelOptions } from './types';
 
 export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions((builder) => {
+  builder.addRadio({
+    path: 'topologyPopStyle',
+    name: 'Representação dos POPs',
+    category: ['Visualização'],
+    defaultValue: 'icon',
+    description: 'Ícones com nome e status, ou os cards completos. Os detalhes permanecem disponíveis ao selecionar.',
+    settings: {
+      options: [
+        { label: 'Ícones', value: 'icon' },
+        { label: 'Cards', value: 'card' },
+      ],
+    },
+  });
+  builder.addBooleanSwitch({
+    path: 'fireEnabled',
+    name: 'Focos de calor próximos da rede',
+    category: ['Focos de calor'],
+    defaultValue: false,
+    description:
+      'Consulta pública do INPE no navegador, na área dos POPs e dos caminhos geográficos das rotas. Detecções por satélite, sem confirmação de incêndio.',
+  });
+  builder.addNumberInput({
+    path: 'fireRadiusKm',
+    name: 'Distância de atenção (km)',
+    category: ['Focos de calor'],
+    defaultValue: 5,
+    settings: { min: 0.1, max: 50, step: 0.1 },
+    showIf: (o) => Boolean(o.fireEnabled),
+  });
+  builder.addNumberInput({
+    path: 'fireWindowHours',
+    name: 'Janela de detecção (horas)',
+    category: ['Focos de calor'],
+    defaultValue: 24,
+    description: 'Dados recentes, independentes do período das métricas do Grafana. Cobertura Brasil, últimos 48h.',
+    settings: { min: 1, max: 48, step: 1 },
+    showIf: (o) => Boolean(o.fireEnabled),
+  });
+  builder.addNumberInput({
+    path: 'fireRefreshSeconds',
+    name: 'Atualizar focos a cada (segundos)',
+    category: ['Focos de calor'],
+    defaultValue: 600,
+    settings: { min: 120, max: 3600, step: 60 },
+    showIf: (o) => Boolean(o.fireEnabled),
+  });
   builder.addNumberInput({
     path: 'staleAfterSeconds',
     name: 'Idade máxima da amostra (segundos)',

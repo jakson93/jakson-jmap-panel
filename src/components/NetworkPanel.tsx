@@ -3,6 +3,10 @@ import L from 'leaflet';
 import { css, cx } from '@emotion/css';
 import { GrafanaTheme2, LoadingState, PanelProps } from '@grafana/data';
 import { Button, Icon, useStyles2, useTheme2 } from '@grafana/ui';
+import { mergeOptions } from '../optionMerge';
+import { useFireMonitoring } from './useFireMonitoring';
+import { FireControls } from './FireLayer';
+import { PopIconPicker } from './PopIconPicker';
 import { PanelOptions, NetworkView, NetworkFilter, Route } from '../types';
 import {
   alignEquipment,
@@ -44,7 +48,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
   const [draft, setDraft] = React.useState<PanelOptions>();
   const [history, setHistory] = React.useState<PanelOptions[]>([]);
   const [future, setFuture] = React.useState<PanelOptions[]>([]);
-  const [base, setBase] = React.useState('');
+  const [base, setBase] = React.useState<PanelOptions>();
   const [tool, setTool] = React.useState<EditTool>('move');
   const [selection, setSelection] = React.useState<{ kind: 'node' | 'route'; id: string }>();
   const [fullDetails, setFullDetails] = React.useState(false);
@@ -58,7 +62,37 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
   const map = React.useRef<L.Map>();
   const root = React.useRef<HTMLDivElement>(null);
   const editing = Boolean(draft);
-  const current = draft ?? options;
+  const mergedDraft = React.useMemo(
+    () => (draft && base ? mergeOptions(base, draft, options) : undefined),
+    [base, draft, options]
+  );
+  const current = mergedDraft?.value ?? options;
+  React.useEffect(() => {
+    if (
+      !draft ||
+      !base ||
+      JSON.stringify(options) === JSON.stringify(base) ||
+      !mergedDraft ||
+      mergedDraft.conflicts.length
+    ) {
+      return;
+    }
+    setDraft(mergedDraft.value);
+    setBase(structuredClone(options));
+    setHistory((past) =>
+      past
+        .map((item) => mergeOptions(base, item, options))
+        .filter((item) => !item.conflicts.length)
+        .map((item) => item.value)
+    );
+    setFuture((next) =>
+      next
+        .map((item) => mergeOptions(base, item, options))
+        .filter((item) => !item.conflicts.length)
+        .map((item) => item.value)
+    );
+  }, [options, base, draft, mergedDraft]);
+  const fire = useFireMonitoring(current);
   const nodes = React.useMemo(() => networkNodes(current, view), [current, view]);
   const expanded = React.useMemo(
     () => (editing ? new Set((current.pops ?? []).map((p) => p.id)) : expandedPops),
@@ -119,7 +153,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       ? (displayPaths.get(selectedRoute.id) ?? [])
       : routePath(selectedRoute, current, view, nodes)
     : [];
-  const conflicting = Boolean(draft && JSON.stringify(options) !== base);
+  const conflicting = Boolean(mergedDraft?.conflicts.length);
   const unbound =
     view === 'topology' ? routes.filter((r) => routePath(r, current, view, nodes).length === 0).length : 0;
   React.useEffect(() => {
@@ -158,7 +192,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
   };
   const start = () => {
     setDraft(structuredClone(options));
-    setBase(JSON.stringify(options));
+    setBase(structuredClone(options));
     setHistory([]);
     setFuture([]);
     setMessage('Arraste os itens ou use as ferramentas para editar.');
@@ -178,7 +212,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     if (!draft || conflicting) {
       return;
     }
-    onOptionsChange({ ...draft, viewMode: view });
+    onOptionsChange({ ...current, viewMode: view });
     setDraft(undefined);
     setHistory([]);
     setFuture([]);
@@ -285,6 +319,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       <div ref={root} className={styles.root} data-testid="jmap-workspace">
         <MapView
           options={options}
+          fire={fire}
           onOptionsChange={onOptionsChange}
           data={data}
           timeRange={timeRange}
@@ -356,6 +391,12 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           </button>
         </div>
         <div className={styles.actions}>
+          {view === 'map' && (
+            <FireControls
+              fire={fire}
+              onLocate={(lat, lng) => map.current?.flyTo([lat, lng], Math.max(12, map.current.getZoom()))}
+            />
+          )}
           {editing ? (
             <>
               <Button variant="secondary" onClick={cancel}>
@@ -374,8 +415,8 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       </header>
       {conflicting && (
         <div className={styles.notice} role="alert">
-          As opções foram alteradas fora do editor. Cancele este rascunho e reabra a edição para evitar sobrescrever
-          essas alterações.
+          O mesmo campo foi alterado no cadastro e no layout. Cancele e reabra o rascunho para revisar essas mudanças.
+          Alterações em campos diferentes são combinadas automaticamente.
         </div>
       )}
       {data.state === LoadingState.Error && (
@@ -388,6 +429,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           <NetworkCanvas
             key={view}
             options={filtered}
+            fire={fire}
             view={view}
             nodes={displayedNodes}
             readings={readings}
@@ -933,6 +975,17 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                     </Button>
                   </>
                 )}
+                {!selectedNode.equipment && view === 'topology' && (
+                  <PopIconPicker
+                    pop={selectedNode.pop}
+                    onChange={(patch) =>
+                      change({
+                        ...current,
+                        pops: current.pops.map((p) => (p.id === selectedNode.pop.id ? { ...p, ...patch } : p)),
+                      })
+                    }
+                  />
+                )}
                 {!selectedNode.equipment && (
                   <label>
                     Região
@@ -1182,6 +1235,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             <div className={styles.legacy}>
               <MapView
                 options={current}
+                fire={fire}
                 onOptionsChange={onOptionsChange}
                 data={data}
                 timeRange={timeRange}

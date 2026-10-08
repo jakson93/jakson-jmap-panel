@@ -1,5 +1,87 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
+test('POP icon selection applies to the same original map configuration without losing route metrics', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: 'Editar layout', exact: true }).click();
+  await panel.getByRole('button', { name: /POP Centro.*Online/ }).click();
+  await panel.getByRole('button', { name: 'Ícone Torre', exact: true }).click();
+  await expect(panel.getByLabel('URL do ícone', { exact: true })).toHaveValue(
+    '/public/plugins/jakson-jmap-panel/img/torre.png'
+  );
+  await panel.getByRole('button', { name: 'Aplicar alterações', exact: true }).click();
+  await expect(panel.locator('.jmap-node[title^="POP Centro"] img')).toHaveAttribute('src', /img\/torre.png$/);
+  await panel.getByRole('button', { name: 'Mapa', exact: true }).click();
+  await expect(panel.locator('.jmap-pop-icon img[src$="img/torre.png"]')).toBeVisible();
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: 'Listar equipamentos e rotas', exact: true }).click();
+  await panel.getByRole('button', { name: /POP Centro → POP Norte/ }).click();
+  await expect(panel.getByRole('region', { name: 'Monitoramento da rota' })).toContainText('-28');
+});
+
+test('fire layer shows satellite detections near geographic assets and preserves the topology', async ({
+  page,
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  // Deterministic INPE-schema fixture; this is not an observed fire event.
+  await page.route('https://terrabrasilis.dpi.inpe.br/queimadas/geoserver/wfs?**', async (route) =>
+    route.fulfill({
+      json: {
+        type: 'FeatureCollection',
+        totalFeatures: 1,
+        features: [
+          {
+            geometry: { type: 'Point', coordinates: [-46.35192, -23.39763] },
+            properties: {
+              foco_id: 'e2e-demo',
+              latitude: -23.39763,
+              longitude: -46.35192,
+              data_hora_gmt: new Date().toISOString(),
+              satelite: 'TESTE-SATÉLITE',
+              municipio: 'Cenário de teste',
+              estado: 'SP',
+            },
+          },
+        ],
+      },
+    })
+  );
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-fire-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Focos de calor · 1', exact: true }).click();
+  const fire = panel.getByRole('region', { name: 'Focos de calor próximos da rede' });
+  await expect(fire.getByText('Cenário de teste · TESTE-SATÉLITE', { exact: true })).toBeVisible();
+  await expect(fire).toContainText('0.00 km');
+  await expect(fire).toContainText('sem confirmação de incêndio');
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await expect(panel.getByRole('button', { name: /POP Centro.*Online/ })).toBeVisible();
+});
+
+test('failed INPE request is displayed as unavailable rather than a zero-focus success', async ({
+  page,
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  await page.route('https://terrabrasilis.dpi.inpe.br/queimadas/geoserver/wfs?**', async (route) =>
+    route.fulfill({ status: 503, body: 'Unavailable' })
+  );
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-fire-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Focos de calor · indisponível · atenção', exact: true }).click();
+  await expect(panel.getByRole('alert')).toContainText('Não foi possível atualizar');
+  await expect(panel.getByText('Nenhum foco encontrado próximo da rede nessa consulta.', { exact: true })).toHaveCount(
+    0
+  );
+});
+
 test('legacy map routes without POP associations display in topology with their configured trunk signals', async ({
   gotoPanelEditPage,
   readProvisionedDashboard,

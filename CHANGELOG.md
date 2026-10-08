@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 (Homologação — 2026-10-08)
+
+- Acrescenta camada opcional de focos de calor INPE próximos de POPs e segmentos geográficos de rotas, com raio, período e atualização configuráveis, distâncias e detalhes. Desligada por padrão, sem credenciais, backend ou notificações.
+- Distingue consulta indisponível, antiga ou parcial de ausência de focos. Limita consultas e elementos para controlar o custo no navegador.
+- Apresenta POPs como ícones na topologia, com presets e URL no editor; mantém a opção de cards e o mesmo cadastro/ícone do mapa.
+- Unifica resolução de ícones nos dois modos e cadastro original, incluindo URLs legadas e Grafana em subdiretório.
+- Atualiza coordenadas e zoom do mapa ao mudar as opções originais; captura a câmera do próprio painel, sem depender do último mapa de outro painel.
+- Salva rotas e POPs por ID, combinando alterações não conflitantes de métricas, vínculos e layout. Impede sobrescritas em conflitos e remoções durante a edição.
+- Combina atualizações do cadastro com o rascunho do layout e seu histórico de desfazer/refazer, preservando todas as opções originais.
+- Adiciona testes de sincronização, distâncias, respostas assíncronas e falhas, além de demonstração com rede sintética e consulta real ao INPE.
+
 ## 1.3.1 (Homologação — 2026-10-08)
 
 - Corrige a compatibilidade de rotas antigas do mapa sem associação exata a POPs: desenha extremidades com vínculo pendente sem inventar equipamentos.

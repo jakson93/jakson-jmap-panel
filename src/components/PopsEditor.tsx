@@ -1,43 +1,15 @@
 import React from 'react';
-import { migratePresetIcon } from '../iconUrl';
+import { POP_ICON_PRESETS, normalizePopIconUrl } from '../iconUrl';
+import { saveEditedItem } from '../optionMerge';
 import { DataFrame, FieldType, SelectableValue, StandardEditorProps } from '@grafana/data';
 import { Button, Field, InlineSwitch, Input, Modal, Select, Stack } from '@grafana/ui';
 
 import { Pop, PopEquipment, PopMetric } from '../types';
-const datacenterIcon = '/public/plugins/jakson-jmap-panel/img/datacenter.png';
-const oltIcon = '/public/plugins/jakson-jmap-panel/img/olt.png';
-const swIcon = '/public/plugins/jakson-jmap-panel/img/sw.png';
-const torreIcon = '/public/plugins/jakson-jmap-panel/img/torre.png';
 import { PopSelectMap } from './PopSelectMap';
-
-const POP_ICON_PRESETS = [
-  {
-    id: 'datacenter',
-    label: 'Datacenter',
-    url: datacenterIcon,
-  },
-  {
-    id: 'olt',
-    label: 'OLT',
-    url: oltIcon,
-  },
-  {
-    id: 'sw',
-    label: 'SW',
-    url: swIcon,
-  },
-  {
-    id: 'torre',
-    label: 'Torre',
-    url: torreIcon,
-  },
-];
-
-const PLUGIN_PUBLIC_PATH = '/public/plugins/jakson-jmap-panel/';
 
 const createEmptyPop = (lat: number, lng: number): Pop => ({
   id: `pop-${Date.now()}`,
-name: '',
+  name: '',
   lat,
   lng,
   iconUrl: '',
@@ -63,6 +35,8 @@ type State = {
   editingIndex: number | null;
   draggingIndex: number | null;
   draftPop: Pop;
+  basePop?: Pop;
+  saveError?: string;
   newEquipment: PopEquipment;
   editingEquipmentId: string | null;
 };
@@ -132,23 +106,6 @@ const getSelectValue = (
   return options.find((option) => option.value === value || option.label === value) ?? { label: value, value };
 };
 
-const normalizePopIconUrl = (value?: string) => {
-  const raw = migratePresetIcon(value?.trim() ?? '');
-  if (!raw) {
-    return '';
-  }
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:') || raw.startsWith('/')) {
-    return raw;
-  }
-  if (raw.startsWith('public/plugins/')) {
-    return `/${raw}`;
-  }
-  if (raw.startsWith('public/')) {
-    return `/${raw}`;
-  }
-  return `${PLUGIN_PUBLIC_PATH}${raw.replace(/^\.\//, '')}`;
-};
-
 export class PopsEditor extends React.PureComponent<Props, State> {
   state: State = {
     isPopModalOpen: false,
@@ -174,6 +131,8 @@ export class PopsEditor extends React.PureComponent<Props, State> {
     this.setState({
       isPopModalOpen: true,
       editingIndex: null,
+      basePop: undefined,
+      saveError: '',
       draftPop: createEmptyPop(centerLat, centerLng),
       newEquipment: createEmptyEquipment(),
       editingEquipmentId: null,
@@ -189,6 +148,8 @@ export class PopsEditor extends React.PureComponent<Props, State> {
       isPopModalOpen: true,
       editingIndex: index,
       draftPop: clonePop(pop),
+      basePop: structuredClone(pop),
+      saveError: '',
       newEquipment: createEmptyEquipment(),
       editingEquipmentId: null,
     });
@@ -199,14 +160,15 @@ export class PopsEditor extends React.PureComponent<Props, State> {
   };
 
   savePop = () => {
-    const { draftPop, editingIndex } = this.state;
-    const nextPops = [...this.pops];
-    if (editingIndex === null) {
-      nextPops.push(draftPop);
-    } else {
-      nextPops[editingIndex] = draftPop;
+    const result = saveEditedItem(this.pops, this.state.basePop, this.state.draftPop);
+    if (result.conflicts.length) {
+      this.setState({
+        saveError:
+          'Este POP foi alterado ou removido durante a edição. Feche e reabra o cadastro para revisar as mudanças.',
+      });
+      return;
     }
-    this.updatePops(nextPops);
+    this.updatePops(result.value);
     this.setState({ isPopModalOpen: false, editingIndex: null });
   };
 
@@ -732,6 +694,7 @@ export class PopsEditor extends React.PureComponent<Props, State> {
             <Button variant="secondary" onClick={this.closePopModal}>
               Cancelar
             </Button>
+            {this.state.saveError && <div role="alert">{this.state.saveError}</div>}
             <Button onClick={this.savePop} disabled={!draftPop.name.trim()}>
               Salvar POP
             </Button>

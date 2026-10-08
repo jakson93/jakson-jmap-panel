@@ -1,5 +1,8 @@
 import React from 'react';
-import { migratePresetIcon } from '../iconUrl';
+import { ConfiguredMapView } from './ConfiguredMapView';
+import { FireLayer } from './FireLayer';
+import { FireMonitoring } from './useFireMonitoring';
+import { normalizePopIconUrl } from '../iconUrl';
 import { ViewportCapture } from './ViewportCapture';
 import L from 'leaflet';
 import { css } from '@emotion/css';
@@ -26,6 +29,7 @@ import { Readings, equipmentStatus, popStatus, routeStatus, statusColor, statusL
 export type EditTool = 'move' | 'connect' | 'route';
 type Props = {
   options: PanelOptions;
+  fire: FireMonitoring;
   view: NetworkView;
   nodes: NetworkNode[];
   readings: Readings;
@@ -242,6 +246,7 @@ export function NetworkCanvas(props: Props) {
         className={`${styles.map} ${view === 'topology' ? styles.topology : options.mapTone !== 'original' && !['google_satellite', 'google_hybrid', 'carto_dark'].includes(options.mapProvider) ? styles.muted : ''}`}
       >
         <ViewportCapture onBounds={setViewport} />
+        {view === 'map' && <ConfiguredMapView lat={options.centerLat} lng={options.centerLng} zoom={options.zoom} />}
         <MapLifecycle
           view={view}
           initialNodes={view === 'topology' ? [...visibleNodes, ...mapAnchors] : visibleNodes}
@@ -449,10 +454,7 @@ export function NetworkCanvas(props: Props) {
                   ? 'pop-router.svg'
                   : 'pop-datacenter.svg';
             const supplied = node.equipment ? '' : node.pop.iconUrl;
-            const imageUrl =
-              supplied && /^(https?:\/\/|\/|public\/)/i.test(supplied)
-                ? supplied
-                : `public/plugins/jakson-jmap-panel/img/${fallback}`;
+            const imageUrl = supplied ? supplied : `public/plugins/jakson-jmap-panel/img/${fallback}`;
             const showName = view === 'topology' || node.pop.showName !== false;
             const group = groups.get(node.pop.id);
             const internal = group?.localRoutes.length ?? 0;
@@ -460,11 +462,21 @@ export function NetworkCanvas(props: Props) {
             const summary = node.equipment
               ? `${node.equipment.type || 'Equipamento'} · ${node.pop.name}`
               : `${node.pop.equipments.length} equipamentos${internal ? ` · ${internal} links internos` : ''}`;
+            const compactPop = view === 'topology' && !node.equipment && options.topologyPopStyle !== 'card';
+            const compactSize = Number(theme.spacing(9).replace('px', ''));
+            const compactWidth = Number(theme.spacing(22).replace('px', ''));
+            const compactHeight = Number(theme.spacing(15).replace('px', ''));
             const icon = L.divIcon({
               className: `jmap-node ${styles.node} ${selectedNode === node.id || connection?.id === node.id ? styles.selected : ''}`,
-              iconSize: [markerWidth * markerScale, markerHeight * markerScale],
-              iconAnchor: [(markerWidth * markerScale) / 2, (markerHeight * markerScale) / 2],
-              html: `<div class="${styles.nodeCard} ${!node.equipment ? styles.popCard : ''}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left;border-top-color:${statusColor(status, theme)}"><div class="${styles.identity}"><img src="${escape(migratePresetIcon(imageUrl))}" alt="" draggable="false" /><div><small>${node.equipment ? 'EQUIPAMENTO' : 'PONTO DE PRESENÇA'}</small><strong>${showName ? escape(node.name || 'Sem nome') : ''}</strong></div></div><span class="${styles.nodeStatus}" style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}</span><span>${escape(summary)}</span>${!node.equipment ? `<small class="${styles.hint}" style="color:${failures ? theme.colors.error.text : theme.colors.text.secondary}">${failures ? `${failures} link(s) interno(s) em falha` : expanded.has(node.pop.id) ? 'Equipamentos expandidos' : 'Selecione para expandir'}</small>` : ''}</div>`,
+              iconSize: compactPop
+                ? [compactWidth, compactHeight]
+                : [markerWidth * markerScale, markerHeight * markerScale],
+              iconAnchor: compactPop
+                ? [compactWidth / 2, compactHeight - compactSize / 2]
+                : [(markerWidth * markerScale) / 2, (markerHeight * markerScale) / 2],
+              html: compactPop
+                ? `<div class="${styles.popIcon}"><strong>${escape(node.name || 'Sem nome')}</strong><span style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}</span><div style="border-color:${statusColor(status, theme)}"><img src="${escape(normalizePopIconUrl(imageUrl))}" alt="" draggable="false" /></div></div>`
+                : `<div class="${styles.nodeCard} ${!node.equipment ? styles.popCard : ''}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left;border-top-color:${statusColor(status, theme)}"><div class="${styles.identity}"><img src="${escape(normalizePopIconUrl(imageUrl))}" alt="" draggable="false" /><div><small>${node.equipment ? 'EQUIPAMENTO' : 'PONTO DE PRESENÇA'}</small><strong>${showName ? escape(node.name || 'Sem nome') : ''}</strong></div></div><span class="${styles.nodeStatus}" style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}</span><span>${escape(summary)}</span>${!node.equipment ? `<small class="${styles.hint}" style="color:${failures ? theme.colors.error.text : theme.colors.text.secondary}">${failures ? `${failures} link(s) interno(s) em falha` : expanded.has(node.pop.id) ? 'Equipamentos expandidos' : 'Selecione para expandir'}</small>` : ''}</div>`,
             });
             return (
               <Marker
@@ -518,6 +530,7 @@ export function NetworkCanvas(props: Props) {
               />
             );
           })}
+        {view === 'map' && <FireLayer fire={props.fire} />}
       </MapContainer>
     </div>
   );
@@ -592,6 +605,41 @@ function getStyles(theme: GrafanaTheme2) {
       },
       small: { fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary },
       '&:focus-visible': { outline: `2px solid ${theme.colors.primary.text}`, outlineOffset: theme.spacing(0.5) },
+    }),
+    popIcon: css({
+      height: theme.spacing(15),
+      justifyContent: 'flex-end',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: theme.spacing(0.5),
+      color: theme.colors.text.primary,
+      '> div': {
+        width: theme.spacing(9),
+        height: theme.spacing(9),
+        padding: theme.spacing(1),
+        background: theme.colors.background.primary,
+        border: `2px solid ${theme.colors.border.medium}`,
+        borderRadius: theme.shape.radius.circle,
+        boxShadow: theme.shadows.z2,
+      },
+      img: { width: '100%', height: '100%', objectFit: 'contain' },
+      strong: {
+        fontSize: theme.typography.bodySmall.fontSize,
+        maxWidth: '100%',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        background: theme.colors.background.primary,
+        padding: theme.spacing(0, 0.5),
+        borderRadius: theme.shape.radius.default,
+      },
+      span: {
+        fontSize: theme.typography.bodySmall.fontSize,
+        background: theme.colors.background.primary,
+        padding: theme.spacing(0, 0.5),
+        borderRadius: theme.shape.radius.default,
+      },
     }),
     identity: css({
       display: 'flex',

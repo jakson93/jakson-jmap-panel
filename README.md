@@ -2,7 +2,7 @@
 
 Plugin de mapa para monitoramento de POPs e rotas de transporte em Grafana.
 
-## Versão de teste 1.3.1 — mapa e topologia por POP
+## Versão de teste 1.4.0 — mapa e topologia por POP
 
 A visualização original continua disponível, com aparência refinada dentro do mapa. A alternativa **Topologia** permite posicionar equipamentos, puxar ligações e ajustar caminhos em modo de edição, com desfazer, refazer e cancelar. Após **Aplicar alterações**, salve o dashboard no Grafana.
 
@@ -14,7 +14,15 @@ Use a branch `codex/mapa-topologia` em homologação. O original está preservad
 
 Veja o [passo a passo para testar, instalar e reverter](docs/TESTAR-E-REVERTER.md), incluindo um Grafana separado via `compose.homolog.yaml` e um dashboard com dados demonstrativos.
 
-[Baixar o ZIP compilado 1.3.1 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.1-20261008/jakson-jmap-panel-1.3.1.zip).
+[Baixar o ZIP compilado 1.4.0 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.4.0-20261008/jakson-jmap-panel-1.4.0.zip).
+
+A versão 1.4 apresenta POPs como ícones na topologia. Em **Editar layout**, selecione um POP e escolha Datacenter, OLT, SW, Torre ou uma URL. O campo `iconUrl` é o mesmo do **Cadastro de POP** e do mapa; também funciona com Grafana servido em subdiretório. **Visualização → Representação dos POPs → Cards** conserva a apresentação anterior.
+
+O **Cadastro de Rotas** nas opções do Grafana continua sendo a fonte única de interfaces, trunks, sinais e métricas. Durante a edição do layout, mudanças externas em campos diferentes são combinadas por ID, inclusive com desfazer/refazer. Edições concorrentes do mesmo campo bloqueiam o salvamento para evitar perda de configurações; feche e reabra a edição para revisar.
+
+**Focos de calor** é uma camada opcional, desligada por padrão. Ative em **Focos de calor → Focos de calor próximos da rede**. Ela consulta o serviço público WFS do [Programa Queimadas / INPE](https://terrabrasilis.dpi.inpe.br/queimadas/portal/dados-abertos/), cobertura Brasil e últimos 48h, sem API key. Mostra apenas detecções dentro da distância configurada de POPs ou segmentos geográficos de rotas, com horário, satélite, estruturas próximas e distância aproximada. O período é recente e independente das métricas históricas do Grafana. Não confirma incêndio nem interrupção da rede e não envia notificações.
+
+A consulta acontece no navegador: precisa de acesso HTTPS ao INPE e da permissão na CSP, se configurada. Envia a caixa geográfica da rede expandida pelo raio, sem nomes, métricas ou credenciais. Falhas, dados antigos e consultas parciais são explicitados. A resposta é limitada aos 2.000 focos mais recentes na região; o mapa exibe até 200 próximos e a lista até 20, com indicação dos limites. A atualização padrão é de 10 minutos; isso não garante nova passagem de satélite nesse intervalo. Veja [a configuração e os testes](docs/FOCOS-DE-CALOR.md).
 
 A versão 1.3.1 mostra também rotas antigas sem associação, identificadas com vínculo pendente, e apresenta trunks, interfaces e sinais diretamente na topologia. Vincular uma rota existente pela topologia preserva seu traçado geográfico e monitoramento.
 

@@ -12,3 +12,26 @@ export function migratePresetIcon(value: string) {
     ? `/public/plugins/jakson-jmap-panel/img/${aliases[name]}`
     : value;
 }
+
+export const POP_ICON_PRESETS = [
+  { id: 'datacenter', label: 'Datacenter', url: '/public/plugins/jakson-jmap-panel/img/datacenter.png' },
+  { id: 'olt', label: 'OLT', url: '/public/plugins/jakson-jmap-panel/img/olt.png' },
+  { id: 'sw', label: 'SW', url: '/public/plugins/jakson-jmap-panel/img/sw.png' },
+  { id: 'torre', label: 'Torre', url: '/public/plugins/jakson-jmap-panel/img/torre.png' },
+];
+
+/** Works under Grafana's subpath as well as at the domain root. */
+export function normalizePopIconUrl(value?: string) {
+  const raw = migratePresetIcon(value?.trim() ?? '');
+  if (!raw || /^https?:\/\//i.test(raw) || raw.startsWith('data:image/')) {
+    return raw;
+  }
+  const publicPath = raw.replace(/^\/?public\//, 'public/');
+  if (publicPath.startsWith('public/')) {
+    return publicPath;
+  }
+  if (raw.startsWith('/')) {
+    return raw;
+  }
+  return `public/plugins/jakson-jmap-panel/${raw.replace(/^\.\//, '')}`;
+}
