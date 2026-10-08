@@ -12,7 +12,8 @@ test('legacy map routes without POP associations display in topology with their 
   const inspector = panel.getByRole('region', { name: 'Detalhes da seleção' });
   await expect(inspector.getByText('Trunks e interfaces', { exact: true })).toBeVisible();
   const iface = inspector.getByRole('article', { name: 'Interface Interface A · Centro' });
-  await expect(iface.getByText(/dBm/)).toHaveCount(2);
+  await expect(iface).toContainText('-28');
+  await expect(iface).toContainText(/-5[.,]8/);
   await expect(inspector.getByText('Latência', { exact: true })).toBeVisible();
   await inspector.getByRole('button', { name: 'Vincular extremidades desta rota', exact: true }).click();
   await expect(panel.getByLabel('Rota para conectar')).toHaveValue('rota-0');
