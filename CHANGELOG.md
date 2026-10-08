@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 (Homologação — 2026-10-08)
+
+- Corrige a escala do histórico RX após quedas: todo o histórico fornecido permanece visível, inclusive valores anteriores a −40 dBm. Acrescenta leitura anterior à última queda observada, faixa crítica, lacunas explícitas e gráfico responsivo.
+- Combina fragmentos históricos por item e horário, respeita o período selecionado e atualiza o card aberto com a consulta atual.
+- Mostra RX muito baixo em vermelho no card de interfaces e identifica TX/RX ausente como sem dados.
+- Restringe focos de calor exclusivamente a segmentos geográficos de fibra; POPs isolados e trajetos com pontos coincidentes não geram exposição. Adiciona símbolo de fogo.
+- Acrescenta camada opcional de avisos de chuva intensa, acumulado de chuva e tempestade do INMET, com nuvem/chuva sobre o cruzamento do trajeto com a área do aviso. Respeita vigência e buracos de polígonos.
+- Compartilha consultas ambientais entre painéis, com limites, timeout, cache e tratamento de respostas antigas, cobertura parcial e indisponibilidade.
+- Mantém ID, cadastro, métricas, trunks, status e versões anteriores. Sem notificações ou alterações na produção.
+
 ## 1.4.0 (Homologação — 2026-10-08)
 
 - Acrescenta camada opcional de focos de calor INPE próximos de POPs e segmentos geográficos de rotas, com raio, período e atualização configuráveis, distâncias e detalhes. Desligada por padrão, sem credenciais, backend ou notificações.

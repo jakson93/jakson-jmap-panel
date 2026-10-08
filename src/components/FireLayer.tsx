@@ -2,28 +2,25 @@ import React from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Button, useStyles2, useTheme2 } from '@grafana/ui';
-import { CircleMarker, Pane, Popup, Tooltip } from 'react-leaflet';
+import { Marker, Pane, Popup, Tooltip } from 'react-leaflet';
+import { environmentIcon } from './environmentIcon';
 import { FireMonitoring } from './useFireMonitoring';
 
 export function FireLayer({ fire }: { fire: FireMonitoring }) {
   const theme = useTheme2();
   const styles = useStyles2(getStyles);
+  const icon = React.useMemo(() => environmentIcon('fire', theme), [theme]);
   if (!fire.enabled) {
     return null;
   }
   return (
     <Pane name="jmap-fire-focuses" style={{ zIndex: 620 }}>
       {fire.nearby.slice(0, 200).map((focus) => (
-        <CircleMarker
+        <Marker
           key={focus.id}
-          center={[focus.lat, focus.lng]}
-          radius={Number(theme.spacing(1).replace('px', ''))}
-          pathOptions={{
-            color: theme.colors.warning.text,
-            fillColor: theme.colors.error.text,
-            fillOpacity: 0.7,
-            weight: 2,
-          }}
+          position={[focus.lat, focus.lng]}
+          icon={icon}
+          title={`Foco de calor INPE · ${focus.exposures[0].name}`}
         >
           <Tooltip>
             Foco de calor · {focus.exposures[0].distanceKm.toFixed(2)} km de {focus.exposures[0].name}
@@ -38,7 +35,7 @@ export function FireLayer({ fire }: { fire: FireMonitoring }) {
             <ul>
               {focus.exposures.map((asset) => (
                 <li key={`${asset.kind}/${asset.id}`}>
-                  {asset.kind === 'pop' ? 'POP' : 'Rota'}: {asset.name} · {asset.distanceKm.toFixed(2)} km
+                  Rota de fibra: {asset.name} · {asset.distanceKm.toFixed(2)} km
                 </li>
               ))}
             </ul>
@@ -47,7 +44,7 @@ export function FireLayer({ fire }: { fire: FireMonitoring }) {
               rede.
             </small>
           </Popup>
-        </CircleMarker>
+        </Marker>
       ))}
     </Pane>
   );
@@ -82,8 +79,8 @@ export function FireControls({
         <section className={styles.details} aria-label="Focos de calor próximos da rede">
           <strong>Focos de calor · INPE</strong>
           <small>
-            Até {fire.radius} km da rede · últimas {fire.hours}h · dados recentes, independentes do período das
-            métricas.
+            Até {fire.radius} km dos trajetos de fibra · últimas {fire.hours}h · dados recentes, independentes do
+            período das métricas.
           </small>
           {fire.loading && <span role="status">Consultando INPE…</span>}
           {fire.error && (
@@ -92,7 +89,9 @@ export function FireControls({
             </span>
           )}
           {fire.noCoordinates && (
-            <span role="alert">Cadastre coordenadas dos POPs ou caminhos geográficos das rotas.</span>
+            <span role="alert">
+              Cadastre caminhos geográficos das rotas de fibra com pelo menos dois pontos distintos.
+            </span>
           )}
           {fire.stale && <span role="alert">Consulta desatualizada. A cobertura atual não está confirmada.</span>}
           {fire.truncated && (
@@ -121,16 +120,15 @@ export function FireControls({
                     {focus.municipality || 'Localização por coordenadas'} · {focus.satellite}
                   </span>
                   <small>
-                    {new Date(focus.detectedAt).toLocaleString()} · {focus.exposures.length} estrutura(s)/rota(s)
-                    próxima(s)
+                    {new Date(focus.detectedAt).toLocaleString()} · {focus.exposures.length} rota(s) de fibra próxima(s)
                   </small>
                 </button>
                 <details>
-                  <summary>Estruturas e rotas próximas</summary>
+                  <summary>Rotas de fibra próximas</summary>
                   <ul>
                     {focus.exposures.map((asset) => (
                       <li key={`${asset.kind}/${asset.id}`}>
-                        {asset.kind === 'pop' ? 'POP' : 'Rota'}: {asset.name} · {asset.distanceKm.toFixed(2)} km
+                        Rota de fibra: {asset.name} · {asset.distanceKm.toFixed(2)} km
                       </li>
                     ))}
                   </ul>

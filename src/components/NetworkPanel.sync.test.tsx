@@ -41,6 +41,7 @@ jest.mock('./NetworkCanvas', () => ({
     </div>
   ),
 }));
+jest.mock('./RainLayer', () => ({ RainControls: () => null }));
 jest.mock('./FireLayer', () => ({ FireControls: () => null }));
 jest.mock('./MapView', () => ({ MapView: () => null }));
 

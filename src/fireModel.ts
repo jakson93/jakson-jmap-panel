@@ -9,7 +9,7 @@ export type FireFocus = RoutePoint & {
   municipality: string;
   state: string;
 };
-export type FireExposure = { kind: 'pop' | 'route'; id: string; name: string; distanceKm: number };
+export type FireExposure = { kind: 'route'; id: string; name: string; distanceKm: number };
 export type NearbyFire = FireFocus & { exposures: FireExposure[] };
 const rad = (n: number) => (n * Math.PI) / 180;
 const earth = 6371.0088;
@@ -58,10 +58,7 @@ export function fireSettings(options: PanelOptions) {
 }
 
 export function networkFireBounds(options: PanelOptions): [number, number, number, number] | undefined {
-  const points = [
-    ...(options.pops ?? []).map((p) => ({ lat: p.lat, lng: p.lng })),
-    ...(options.routes ?? []).flatMap((r) => r.points ?? []),
-  ].filter(validGeoPoint);
+  const points = geographicRouteSegments(options).flatMap(({ a, b }) => [a, b]);
   if (!points.length) {
     return undefined;
   }
@@ -84,6 +81,20 @@ export function networkFireBounds(options: PanelOptions): [number, number, numbe
     Math.min(180, east + lonPad),
     Math.min(90, north + latPad),
   ];
+}
+
+/** All configured routes represent fiber. Only actual, contiguous geographic segments qualify. */
+export function geographicRouteSegments(options: PanelOptions) {
+  return (options.routes ?? []).flatMap((route) =>
+    (route.points ?? []).slice(1).flatMap((b, i) => {
+      const a = route.points[i];
+      if (!validGeoPoint(a) || !validGeoPoint(b)) {
+        return [];
+      }
+      const length = geoDistance(a, b);
+      return length > 0.000001 ? [{ a, b, route, length }] : [];
+    })
+  );
 }
 
 export function fireQuery(bounds: [number, number, number, number]) {
@@ -156,25 +167,13 @@ export function parseFireResponse(input: unknown): { focuses: FireFocus[]; trunc
 
 export function nearbyFires(focuses: FireFocus[], options: PanelOptions, now: number): NearbyFire[] {
   const { radius, hours } = fireSettings(options);
-  const pops = (options.pops ?? []).filter(validGeoPoint);
-  const segments = (options.routes ?? []).flatMap((route) =>
-    (route.points ?? []).slice(1).flatMap((b, i) => {
-      const a = route.points[i];
-      return validGeoPoint(a) && validGeoPoint(b) ? [{ a, b, route, length: geoDistance(a, b) }] : [];
-    })
-  );
+  const segments = geographicRouteSegments(options);
   const result: NearbyFire[] = [];
   for (const focus of focuses) {
     if (focus.detectedAt < now - hours * 3600000 || focus.detectedAt > now + 60000) {
       continue;
     }
     const exposures: FireExposure[] = [];
-    for (const pop of pops) {
-      const distanceKm = geoDistance(focus, pop);
-      if (distanceKm <= radius) {
-        exposures.push({ kind: 'pop', id: pop.id, name: pop.name, distanceKm });
-      }
-    }
     const distances = new Map<string, FireExposure>();
     for (const { a, b, route, length } of segments) {
       // Cheap geographic rejection before the spherical segment calculation.

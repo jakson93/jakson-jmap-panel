@@ -1,7 +1,11 @@
 import React from 'react';
+import { SignalTrendChart } from './SignalTrendChart';
+import { buildSignalSeries, signalWindow } from '../signalHistory';
 import { ConfiguredMapView } from './ConfiguredMapView';
 import { FireControls, FireLayer } from './FireLayer';
 import { FireMonitoring } from './useFireMonitoring';
+import { RainMonitoring } from './useRainMonitoring';
+import { RainLayer, RainControls } from './RainLayer';
 import { normalizePopIconUrl } from '../iconUrl';
 import L from 'leaflet';
 import { DataFrame, FieldType, LoadingState, PanelData, TimeRange, TimeZone } from '@grafana/data';
@@ -36,6 +40,7 @@ type Props = {
   initialPopId?: string;
   tools?: React.ReactNode;
   fire?: FireMonitoring;
+  rain?: RainMonitoring;
   filter?: NetworkFilter;
   onFilter?: (filter: NetworkFilter) => void;
   onRestore?: (view: SavedNetworkView) => void;
@@ -289,259 +294,6 @@ const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) 
   );
 };
 
-type SignalTrendChartProps = {
-  series?: { values: number[]; times: number[] };
-  width: number;
-  height: number;
-  color: string;
-};
-
-const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProps) => {
-  const theme = useTheme2();
-  const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
-
-  const normalizeTime = (value: number) => (value < 1_000_000_000_000 ? value * 1000 : value);
-
-  const marginLeft = 72;
-  const marginBottom = 24;
-  const marginTop = 20;
-  const plotWidth = Math.max(1, width - marginLeft - 6);
-  const plotHeight = Math.max(1, height - marginBottom - marginTop);
-
-  const values = series?.values ?? [];
-  const times = (series?.times ?? []).map(normalizeTime);
-  const validValues = values.filter((v): v is number => Number.isFinite(v));
-
-  if (validValues.length === 0) {
-    return <div style={{ fontSize: 12 }}>Sem dados</div>;
-  }
-
-  const currentValue = validValues[validValues.length - 1];
-  const min = currentValue - 2;
-  const max = currentValue + 2;
-  const range = max - min || 1;
-  const minTime = times[0] ?? 0;
-  const maxTime = times[times.length - 1] ?? minTime;
-  const timeRange = maxTime - minTime || 1;
-
-  const getY = (value: number) => marginTop + plotHeight - ((value - min) / range) * plotHeight;
-  const getX = (time: number) => marginLeft + ((time - minTime) / timeRange) * plotWidth;
-
-  const rawPoints = values.map((value, idx) => ({
-    x: getX(times[idx] ?? minTime),
-    y: getY(value),
-    idx,
-    time: times[idx] ?? minTime,
-    value,
-  }));
-
-  const maxVisiblePoints = Math.max(32, Math.floor(plotWidth / 6));
-  const simplifiedPoints =
-    rawPoints.length <= maxVisiblePoints
-      ? rawPoints
-      : (() => {
-          const bucketSize = Math.ceil(rawPoints.length / maxVisiblePoints);
-          const reduced: typeof rawPoints = [];
-
-          for (let start = 0; start < rawPoints.length; start += bucketSize) {
-            const bucket = rawPoints.slice(start, start + bucketSize);
-            if (bucket.length === 0) {
-              continue;
-            }
-
-            const first = bucket[0];
-            const last = bucket[bucket.length - 1];
-            const minPoint = bucket.reduce((acc, point) => (point.value < acc.value ? point : acc), bucket[0]);
-            const maxPoint = bucket.reduce((acc, point) => (point.value > acc.value ? point : acc), bucket[0]);
-
-            [first, minPoint, maxPoint, last]
-              .sort((a, b) => a.idx - b.idx)
-              .forEach((point) => {
-                if (!reduced.some((existing) => existing.idx === point.idx)) {
-                  reduced.push(point);
-                }
-              });
-          }
-
-          return reduced;
-        })();
-
-  const linePath = simplifiedPoints.length >= 2 ? simplifiedPoints.map((p) => `${p.x},${p.y}`).join(' ') : '';
-  const significantThreshold = Math.max(0.15, range * 0.12);
-  const significantPoints = simplifiedPoints.filter((point, index, list) => {
-    if (index === 0 || index === list.length - 1) {
-      return false;
-    }
-
-    const prev = list[index - 1];
-    const next = list[index + 1];
-    const deltaPrev = Math.abs(point.value - prev.value);
-    const deltaNext = Math.abs(point.value - next.value);
-    const isPeak = point.value > prev.value && point.value > next.value;
-    const isTrough = point.value < prev.value && point.value < next.value;
-
-    return (isPeak || isTrough) && Math.max(deltaPrev, deltaNext) >= significantThreshold;
-  });
-
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    let closestIdx = 0;
-    let closestDist = Infinity;
-    for (let i = 0; i < simplifiedPoints.length; i++) {
-      const dist = Math.abs(simplifiedPoints[i].x - x);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestIdx = simplifiedPoints[i].idx;
-      }
-    }
-    setHoverIndex(closestIdx);
-  };
-
-  const hoveredPoint =
-    hoverIndex !== null && values[hoverIndex] !== undefined
-      ? {
-          value: values[hoverIndex],
-          idx: hoverIndex,
-          x: getX(times[hoverIndex] ?? minTime),
-          y: getY(values[hoverIndex]),
-          time: times[hoverIndex] ?? minTime,
-        }
-      : null;
-
-  const axisTicks = Array.from({ length: 5 }, (_, idx) => minTime + (timeRange * idx) / 4);
-  const yTicks = Array.from({ length: 5 }, (_, idx) => max - (range * idx) / 4);
-  const formatTick = (time: number) =>
-    new Date(time).toLocaleString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-  return (
-    <div style={{ position: 'relative', width, height }}>
-      <svg
-        width={width}
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ display: 'block' }}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        {yTicks.map((tick, index) => {
-          const y = getY(tick);
-          return (
-            <g key={`y-${index}`}>
-              <line x1={marginLeft} y1={y} x2={width - 6} y2={y} stroke="rgba(148,163,184,0.12)" strokeWidth={1} />
-              <text x={marginLeft - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
-                {tick.toFixed(2)} dBm
-              </text>
-            </g>
-          );
-        })}
-        {linePath && (
-          <>
-            <polyline
-              points={linePath}
-              fill="none"
-              stroke={color}
-              strokeWidth={1.6}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={0.72}
-            />
-            <line
-              x1={marginLeft}
-              y1={marginTop}
-              x2={marginLeft}
-              y2={height - marginBottom}
-              stroke="rgba(148,163,184,0.2)"
-              strokeWidth={1}
-            />
-            <line
-              x1={marginLeft}
-              y1={height - marginBottom}
-              x2={width - 6}
-              y2={height - marginBottom}
-              stroke="rgba(148,163,184,0.2)"
-              strokeWidth={1}
-            />
-          </>
-        )}
-        {significantPoints.map((point) => (
-          <circle
-            key={`sig-${point.idx}`}
-            cx={point.x}
-            cy={point.y}
-            r={3.2}
-            fill={color}
-            fillOpacity={0.95}
-            stroke="rgba(15, 23, 42, 0.9)"
-            strokeWidth={1.5}
-          />
-        ))}
-        {hoveredPoint && (
-          <>
-            <line
-              x1={hoveredPoint.x}
-              y1={marginTop}
-              x2={hoveredPoint.x}
-              y2={height - marginBottom}
-              stroke="rgba(250, 204, 21, 0.35)"
-              strokeWidth={1}
-              strokeDasharray="4 4"
-            />
-            <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r={5} fill={color} stroke="#0f172a" strokeWidth={2} />
-          </>
-        )}
-      </svg>
-      {hoveredPoint && (
-        <div
-          style={{
-            position: 'absolute',
-            left: hoveredPoint.x - 45,
-            bottom: height - marginBottom - 8,
-            transform: 'translateX(-50%)',
-            background: 'rgba(15, 23, 42, 0.98)',
-            border: `1px solid ${color}`,
-            borderRadius: 8,
-            padding: '8px 12px',
-            color: '#e2e8f0',
-            fontSize: theme.typography.bodySmall.fontSize,
-            fontWeight: 600,
-            whiteSpace: 'nowrap',
-            zIndex: 10,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          }}
-        >
-          <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 2 }}>{formatTick(hoveredPoint.time)}</div>
-          <div>{hoveredPoint.value.toFixed(2)}</div>
-          {significantPoints.some((point) => point.idx === hoveredPoint.idx) && (
-            <div style={{ color: '#facc15', fontSize: 9, marginTop: 2 }}>Oscilacao relevante</div>
-          )}
-        </div>
-      )}
-      {axisTicks.map((tick, i) => (
-        <div
-          key={i}
-          style={{
-            position: 'absolute',
-            left: getX(tick) - 40,
-            top: height - 20,
-            width: 80,
-            textAlign: 'center',
-            fontSize: theme.typography.bodySmall.fontSize,
-            color: '#94a3b8',
-          }}
-        >
-          {formatTick(tick)}
-        </div>
-      ))}
-    </div>
-  );
-};
-
 function CaptureLeafletView() {
   useMapEvents({
     moveend: (e) => {
@@ -704,6 +456,7 @@ export function MapView({
   initialPopId,
   tools,
   fire,
+  rain,
   filter: externalFilter,
   onFilter,
   onRestore,
@@ -736,7 +489,7 @@ export function MapView({
   const [selectedLinkSide, setSelectedLinkSide] = React.useState<string | null>(null);
   const [rxHistory, setRxHistory] = React.useState<{
     name: string;
-    series?: { values: number[]; times: number[] };
+    item: string;
   } | null>(null);
   const [viewport, setViewport] = React.useState<L.LatLngBounds>();
   const [currentZoom, setCurrentZoom] = React.useState(zoom);
@@ -986,6 +739,7 @@ export function MapView({
     [activeSeries, theme, timeZone]
   );
   const itemSeriesMap = React.useMemo(() => buildItemSeriesMap(activeSeries), [activeSeries]);
+  const rxSeries = React.useMemo(() => buildSignalSeries(activeSeries), [activeSeries]);
   const itemSeriesTimeMap = React.useMemo(() => buildItemSeriesWithTimeMap(activeSeries), [activeSeries]);
 
   const formatBitsPerSec = React.useCallback((value: number | null | undefined): string => {
@@ -1190,34 +944,6 @@ export function MapView({
     return `${hours}h ${minutes}m`;
   };
 
-  const getSeriesTimeUnit = (latestTime: number) => (latestTime < 1_000_000_000_000 ? 's' : 'ms');
-
-  const filterSeriesByTimeRange = React.useCallback(
-    (series?: { values: number[]; times: number[] }) => {
-      if (!series || series.values.length === 0) {
-        return series;
-      }
-
-      const fromMs = timeRange.from.valueOf();
-      const toMs = timeRange.to.valueOf();
-      const isSeconds = getSeriesTimeUnit(series.times[series.times.length - 1]) === 's';
-      const rangeStart = isSeconds ? Math.floor(fromMs / 1000) : fromMs;
-      const rangeEnd = isSeconds ? Math.ceil(toMs / 1000) : toMs;
-      const filtered = { values: [] as number[], times: [] as number[] };
-
-      for (let i = 0; i < series.values.length; i++) {
-        const time = series.times[i];
-        if (time >= rangeStart && time <= rangeEnd) {
-          filtered.values.push(series.values[i]);
-          filtered.times.push(time);
-        }
-      }
-
-      return filtered.values.length > 0 ? filtered : series;
-    },
-    [timeRange.from, timeRange.to]
-  );
-
   return (
     <div
       ref={containerRef}
@@ -1226,9 +952,15 @@ export function MapView({
       style={{ height: '100%', minHeight: tools ? theme.spacing(48) : undefined, width: '100%', display: 'flex' }}
     >
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-        {(tools || fire?.enabled) && (
+        {(tools || fire?.enabled || rain?.enabled) && (
           <div className={presentation.tools}>
             {tools}
+            {rain && (
+              <RainControls
+                rain={rain}
+                onLocate={(lat, lng) => mapRef.current?.flyTo([lat, lng], Math.max(mapRef.current.getZoom(), 12))}
+              />
+            )}
             {fire && (
               <FireControls
                 fire={fire}
@@ -1699,10 +1431,9 @@ export function MapView({
                                 onClick={() => {
                                   setSelectedLinkSide(side);
                                   if (iface?.rxItem) {
-                                    const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
                                     setRxHistory({
                                       name: iface.name || 'Interface',
-                                      series,
+                                      item: iface.rxItem,
                                     });
                                   }
                                 }}
@@ -1727,10 +1458,20 @@ export function MapView({
                                   </div>
                                   <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
                                     <span>
-                                      TX: <strong>{txValue?.text ?? '--'}</strong>
+                                      TX: <strong>{txValue?.text ?? 'Sem dados'}</strong>
                                     </span>
                                     <span>
-                                      RX: <strong>{rxValue?.text ?? '--'}</strong>
+                                      RX:{' '}
+                                      <strong
+                                        style={{
+                                          color:
+                                            iface?.rxItem && (getNumericValue(iface.rxItem) ?? Infinity) <= -35
+                                              ? theme.colors.error.text
+                                              : theme.colors.text.primary,
+                                        }}
+                                      >
+                                        {rxValue?.text ?? 'Sem dados'}
+                                      </strong>
                                     </span>
                                   </div>
                                 </div>
@@ -1779,10 +1520,9 @@ export function MapView({
                                     onClick={() => {
                                       setSelectedLinkSide(side);
                                       if (iface?.rxItem) {
-                                        const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
                                         setRxHistory({
                                           name: iface.name || 'Interface',
-                                          series,
+                                          item: iface.rxItem,
                                         });
                                       }
                                     }}
@@ -1809,10 +1549,20 @@ export function MapView({
                                       </div>
                                       <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
                                         <span>
-                                          TX: <strong>{txValue?.text ?? '--'}</strong>
+                                          TX: <strong>{txValue?.text ?? 'Sem dados'}</strong>
                                         </span>
                                         <span>
-                                          RX: <strong>{rxValue?.text ?? '--'}</strong>
+                                          RX:{' '}
+                                          <strong
+                                            style={{
+                                              color:
+                                                iface?.rxItem && (getNumericValue(iface.rxItem) ?? Infinity) <= -35
+                                                  ? theme.colors.error.text
+                                                  : theme.colors.text.primary,
+                                            }}
+                                          >
+                                            {rxValue?.text ?? 'Sem dados'}
+                                          </strong>
                                         </span>
                                       </div>
                                     </div>
@@ -1915,6 +1665,7 @@ export function MapView({
               style={{
                 width: 'min(760px, 92vw)',
                 maxHeight: '80vh',
+                overflowY: 'auto',
                 background: theme.colors.background.primary,
                 border: `1px solid ${theme.colors.border.medium}`,
                 borderRadius: 12,
@@ -1926,12 +1677,16 @@ export function MapView({
               }}
             >
               {(() => {
-                const filteredSeries = filterSeriesByTimeRange(rxHistory.series);
+                const filteredSeries = signalWindow(
+                  rxSeries.get(rxHistory.item),
+                  timeRange.from.valueOf(),
+                  timeRange.to.valueOf()
+                );
                 return (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontSize: 15, fontWeight: 700 }}>
-                        Historico RX - {rxHistory.name}
+                        Histórico RX · {rxHistory.name}
                         {null}
                       </div>
                       <button
@@ -1951,9 +1706,9 @@ export function MapView({
                     <div style={{ border: `1px solid ${theme.colors.border.weak}`, borderRadius: 10, padding: 12 }}>
                       <SignalTrendChart
                         series={filteredSeries}
-                        width={680}
-                        height={180}
-                        color={theme.colors.success.main}
+                        from={timeRange.from.valueOf()}
+                        to={timeRange.to.valueOf()}
+                        timeZone={timeZone}
                       />
                       <div
                         style={{
@@ -2400,6 +2155,7 @@ export function MapView({
               );
             })}
           {fire && <FireLayer fire={fire} />}
+          {rain && <RainLayer rain={rain} />}
         </MapContainer>
         {!selectedRouteId && !selectedPopId && (
           <OperationalConsole

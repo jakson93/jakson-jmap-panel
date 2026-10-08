@@ -2,6 +2,8 @@ import React from 'react';
 import { ConfiguredMapView } from './ConfiguredMapView';
 import { FireLayer } from './FireLayer';
 import { FireMonitoring } from './useFireMonitoring';
+import { RainMonitoring } from './useRainMonitoring';
+import { RainLayer } from './RainLayer';
 import { normalizePopIconUrl } from '../iconUrl';
 import { ViewportCapture } from './ViewportCapture';
 import L from 'leaflet';
@@ -30,6 +32,7 @@ export type EditTool = 'move' | 'connect' | 'route';
 type Props = {
   options: PanelOptions;
   fire: FireMonitoring;
+  rain: RainMonitoring;
   view: NetworkView;
   nodes: NetworkNode[];
   readings: Readings;
@@ -531,6 +534,7 @@ export function NetworkCanvas(props: Props) {
             );
           })}
         {view === 'map' && <FireLayer fire={props.fire} />}
+        {view === 'map' && <RainLayer rain={props.rain} />}
       </MapContainer>
     </div>
   );

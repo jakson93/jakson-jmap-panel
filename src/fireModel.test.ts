@@ -53,9 +53,9 @@ test('detects fire near the middle of a geographic route even when POPs are far,
   expect(result[0].exposures[0].distanceKm).toBeLessThan(0.2);
   expect(options).toEqual(original);
 });
-test('excludes old/future/distant detections and checks POPs too, with configurable radius', () => {
+test('excludes old/future/distant detections and never includes POP proximity alone, with configurable radius', () => {
   const nearPop = { ...focus, lat: -23, lng: -46 };
-  expect(nearbyFires([nearPop], options, now)[0].exposures.map((e) => e.kind)).toEqual(['pop', 'route']);
+  expect(nearbyFires([nearPop], options, now)[0].exposures.map((e) => e.kind)).toEqual(['route']);
   expect(
     nearbyFires(
       [
@@ -76,7 +76,25 @@ test('spherical distances handle endpoint clamping, coincident endpoints and ant
   expect(segmentDistance(a, a, a)).toBe(0);
   expect(segmentDistance({ lat: 0, lng: 180 }, { lat: 0, lng: 179 }, { lat: 0, lng: -179 })).toBeLessThan(0.001);
 });
-test('query uses geographic POPs/routes with radius padding and caps newest records', () => {
+test('a detection near an isolated POP is excluded, including coincident local routes and invalid geographic gaps', () => {
+  const farPop = { ...options.pops[0], lat: focus.lat, lng: -40 };
+  const remoteFocus = { ...focus, lng: farPop.lng };
+  const local = { ...options.routes[0], id: 'lan', points: [farPop, farPop] };
+  const invalid = {
+    ...local,
+    id: 'invalid',
+    points: [
+      { lat: -23, lng: -40.1 },
+      { lat: NaN, lng: -40 },
+      { lat: -23, lng: -39.9 },
+    ],
+  };
+  const network = { ...options, pops: [farPop], routes: [...options.routes, local, invalid] };
+  expect(nearbyFires([remoteFocus], network, now)).toEqual([]);
+  expect(networkFireBounds({ ...network, routes: [local, invalid] })).toBeUndefined();
+  expect(networkFireBounds({ ...network, routes: options.routes })).toEqual(networkFireBounds(options));
+});
+test('query uses geographic routes only with radius padding and caps newest records', () => {
   const bounds = networkFireBounds(options)!;
   expect(bounds[0]).toBeLessThan(-46);
   expect(bounds[2]).toBeGreaterThan(-45.8);

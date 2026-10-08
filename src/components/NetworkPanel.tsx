@@ -6,6 +6,8 @@ import { Button, Icon, useStyles2, useTheme2 } from '@grafana/ui';
 import { mergeOptions } from '../optionMerge';
 import { useFireMonitoring } from './useFireMonitoring';
 import { FireControls } from './FireLayer';
+import { useRainMonitoring } from './useRainMonitoring';
+import { RainControls } from './RainLayer';
 import { PopIconPicker } from './PopIconPicker';
 import { PanelOptions, NetworkView, NetworkFilter, Route } from '../types';
 import {
@@ -93,6 +95,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     );
   }, [options, base, draft, mergedDraft]);
   const fire = useFireMonitoring(current);
+  const rain = useRainMonitoring(current);
   const nodes = React.useMemo(() => networkNodes(current, view), [current, view]);
   const expanded = React.useMemo(
     () => (editing ? new Set((current.pops ?? []).map((p) => p.id)) : expandedPops),
@@ -320,6 +323,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
         <MapView
           options={options}
           fire={fire}
+          rain={rain}
           onOptionsChange={onOptionsChange}
           data={data}
           timeRange={timeRange}
@@ -392,6 +396,12 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
         </div>
         <div className={styles.actions}>
           {view === 'map' && (
+            <RainControls
+              rain={rain}
+              onLocate={(lat, lng) => map.current?.flyTo([lat, lng], Math.max(12, map.current.getZoom()))}
+            />
+          )}
+          {view === 'map' && (
             <FireControls
               fire={fire}
               onLocate={(lat, lng) => map.current?.flyTo([lat, lng], Math.max(12, map.current.getZoom()))}
@@ -430,6 +440,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             key={view}
             options={filtered}
             fire={fire}
+            rain={rain}
             view={view}
             nodes={displayedNodes}
             readings={readings}
@@ -1236,6 +1247,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
               <MapView
                 options={current}
                 fire={fire}
+                rain={rain}
                 onOptionsChange={onOptionsChange}
                 data={data}
                 timeRange={timeRange}

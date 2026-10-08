@@ -9,7 +9,21 @@ const options = (lng: number, enabled = true): PanelOptions => ({
   mapProvider: 'osm',
   fireEnabled: enabled,
   pops: [{ id: 'p', name: 'P', lat: -23, lng, equipments: [] }],
-  routes: [],
+  routes: [
+    {
+      id: 'r',
+      name: 'Fibra',
+      kind: 'transport',
+      colors: { online: '', alert: '', down: '' },
+      points: [
+        { lat: -23, lng },
+        { lat: -23, lng: lng + 0.1 },
+      ],
+      metrics: [],
+      extraMetrics: [],
+      trunks: [],
+    },
+  ],
 });
 const originalFetch = global.fetch;
 afterEach(() => {
@@ -25,25 +39,23 @@ test('disabled layer never calls the external service', () => {
 });
 
 test('concurrent panels share one request, omit credentials, and count only near geographic assets', async () => {
-  const fetchMock = jest
-    .fn()
-    .mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        type: 'FeatureCollection',
-        features: [
-          {
-            properties: {
-              foco_id: 'f',
-              latitude: -23,
-              longitude: -44,
-              data_hora_gmt: new Date().toISOString(),
-              satelite: 'NOAA-20',
-            },
+  const fetchMock = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      type: 'FeatureCollection',
+      features: [
+        {
+          properties: {
+            foco_id: 'f',
+            latitude: -23,
+            longitude: -44,
+            data_hora_gmt: new Date().toISOString(),
+            satelite: 'NOAA-20',
           },
-        ],
-      }),
-    });
+        },
+      ],
+    }),
+  });
   global.fetch = fetchMock;
   const first = renderHook(() => useFireMonitoring(options(-44)));
   const second = renderHook(() => useFireMonitoring(options(-44)));

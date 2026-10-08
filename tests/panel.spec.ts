@@ -60,8 +60,80 @@ test('fire layer shows satellite detections near geographic assets and preserves
   await expect(fire.getByText('Cenário de teste · TESTE-SATÉLITE', { exact: true })).toBeVisible();
   await expect(fire).toContainText('0.00 km');
   await expect(fire).toContainText('sem confirmação de incêndio');
+  await expect(fire.getByRole('button').first()).toContainText('2 rota(s) de fibra');
+  await expect(panel.locator('.jmap-fire-icon')).toHaveCount(1);
   await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
   await expect(panel.getByRole('button', { name: /POP Centro.*Online/ })).toBeVisible();
+});
+
+test('RX history retains the healthy signal after loss, with full scale and a responsive chart', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-signal-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Detalhes da rota', exact: true }).first().click();
+  const detail = panel.getByRole('dialog', { name: 'Detalhes da rota' });
+  await detail.getByRole('button', { name: /Interface A · Centro/ }).click();
+  const history = panel.getByRole('dialog', { name: 'Histórico do sinal RX' });
+  await expect(history.getByText('-40.00 dBm', { exact: true })).toBeVisible();
+  await expect(history.getByText('Antes da última queda observada', { exact: true })).toBeVisible();
+  const coordinates = await history
+    .locator('[data-signal-segment]')
+    .evaluateAll((lines) => lines.map((line) => [Number(line.getAttribute('y1')), Number(line.getAttribute('y2'))]));
+  expect(coordinates.length).toBeGreaterThan(2);
+  expect(coordinates.flat().every((y) => y >= 0 && y <= 240)).toBe(true);
+});
+
+test('INMET rain icon marks only fiber crossings and identifies warnings rather than measurements', async ({
+  page,
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  await page.route('https://terrabrasilis.dpi.inpe.br/queimadas/geoserver/wfs?**', (route) =>
+    route.fulfill({ json: { type: 'FeatureCollection', features: [] } })
+  );
+  await page.route('https://apiprevmet3.inmet.gov.br/avisos/ativos', (route) =>
+    route.fulfill({
+      json: {
+        hoje: [
+          {
+            id: 1,
+            descricao: 'Chuvas Intensas',
+            severidade: 'Perigo',
+            data_inicio: '2020-01-01T00:00:00Z',
+            hora_inicio: '00:00',
+            data_fim: '2099-12-31T00:00:00Z',
+            hora_fim: '23:59',
+            poligono: JSON.stringify({
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [-46.5, -23.1],
+                  [-46.2, -23.1],
+                  [-46.2, -23],
+                  [-46.5, -23],
+                  [-46.5, -23.1],
+                ],
+              ],
+            }),
+            riscos: ['Cenário de teste: chuva prevista, sem medição real'],
+          },
+        ],
+        futuro: [],
+      },
+    })
+  );
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-environment-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await expect(panel.locator('.jmap-rain-icon')).toHaveCount(1);
+  await panel.getByRole('button', { name: 'Chuva · 1', exact: true }).click();
+  const rain = panel.getByRole('region', { name: 'Alertas de chuva nas rotas de fibra' });
+  await expect(rain).toContainText('Chuvas Intensas');
+  await expect(rain).toContainText('não é medição');
+  await expect(rain.getByRole('button', { name: /Localizar na fibra/ })).toHaveCount(1);
 });
 
 test('failed INPE request is displayed as unavailable rather than a zero-focus success', async ({

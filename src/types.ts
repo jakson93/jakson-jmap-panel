@@ -171,6 +171,8 @@ export interface PanelOptions {
   mapLabelMode?: 'smart' | 'name' | 'details' | 'hover';
   mapTone?: 'muted' | 'original';
   topologyPopStyle?: 'icon' | 'card';
+  rainEnabled?: boolean;
+  rainRefreshSeconds?: number;
   fireEnabled?: boolean;
   fireRadiusKm?: number;
   fireWindowHours?: number;

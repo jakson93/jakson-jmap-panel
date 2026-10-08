@@ -21,12 +21,28 @@ export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions
     },
   });
   builder.addBooleanSwitch({
+    path: 'rainEnabled',
+    name: 'Alertas de chuva nas rotas de fibra',
+    category: ['Chuva forte'],
+    defaultValue: false,
+    description:
+      'Avisos vigentes de chuva intensa, acumulado de chuva e tempestade do INMET. O ícone é exibido onde a área de aviso cruza a fibra; não é medição de chuva no local.',
+  });
+  builder.addNumberInput({
+    path: 'rainRefreshSeconds',
+    name: 'Atualização dos avisos (segundos)',
+    category: ['Chuva forte'],
+    defaultValue: 600,
+    settings: { min: 120, max: 3600, step: 60 },
+    showIf: (o) => Boolean(o.rainEnabled),
+  });
+  builder.addBooleanSwitch({
     path: 'fireEnabled',
     name: 'Focos de calor próximos da rede',
     category: ['Focos de calor'],
     defaultValue: false,
     description:
-      'Consulta pública do INPE no navegador, na área dos POPs e dos caminhos geográficos das rotas. Detecções por satélite, sem confirmação de incêndio.',
+      'Consulta pública do INPE no navegador, próximo dos caminhos geográficos das rotas de fibra. Detecções por satélite, sem confirmação de incêndio.',
   });
   builder.addNumberInput({
     path: 'fireRadiusKm',
