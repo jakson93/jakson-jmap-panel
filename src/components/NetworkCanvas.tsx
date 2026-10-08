@@ -20,6 +20,7 @@ import 'leaflet/dist/leaflet.css';
 import { CanvasPoint, MapProvider, NetworkView, PanelOptions, Route } from '../types';
 import { NetworkNode, insertBend, routeEndpoint, routePath } from '../networkModel';
 import { topologyNodes, topologyPaths } from '../networkPresentation';
+import { MapRouteAnchor, MapRouteLayout } from '../legacyTopology';
 import { Readings, equipmentStatus, popStatus, routeStatus, statusColor, statusLabel } from '../networkTelemetry';
 
 export type EditTool = 'move' | 'connect' | 'route';
@@ -40,6 +41,8 @@ type Props = {
   onReady: (map: L.Map) => void;
   expanded: ReadonlySet<string>;
   onTogglePop: (id: string) => void;
+  mapRouteLayout: MapRouteLayout;
+  onMoveMapAnchor: (anchor: MapRouteAnchor, point: CanvasPoint) => void;
 };
 
 const escape = (text: string) =>
@@ -93,7 +96,7 @@ function MapLifecycle({
 }: {
   onReady: Props['onReady'];
   view: NetworkView;
-  initialNodes: NetworkNode[];
+  initialNodes: Array<Pick<NetworkNode, 'id' | 'position'>>;
   onPointer: (p: CanvasPoint) => void;
   onCancel: () => void;
   onZoom: (zoom: number) => void;
@@ -151,6 +154,8 @@ export function NetworkCanvas(props: Props) {
     onReady,
     expanded,
     onTogglePop,
+    mapRouteLayout,
+    onMoveMapAnchor,
   } = props;
   const theme = useTheme2();
   const styles = useStyles2(getStyles);
@@ -166,8 +171,12 @@ export function NetworkCanvas(props: Props) {
     [nodes, expanded, view]
   );
   const paths = React.useMemo(
-    () => topologyPaths(options, nodes, expanded, editing),
-    [options, nodes, expanded, editing]
+    () => new Map([...topologyPaths(options, nodes, expanded, editing), ...mapRouteLayout.paths]),
+    [options, nodes, expanded, editing, mapRouteLayout.paths]
+  );
+  const mapAnchors = React.useMemo(
+    () => mapRouteLayout.anchors.filter((anchor) => options.routes.some((route) => route.id === anchor.routeId)),
+    [mapRouteLayout.anchors, options.routes]
   );
   const groups = React.useMemo(() => {
     const index = new Map(
@@ -235,7 +244,7 @@ export function NetworkCanvas(props: Props) {
         <ViewportCapture onBounds={setViewport} />
         <MapLifecycle
           view={view}
-          initialNodes={visibleNodes}
+          initialNodes={view === 'topology' ? [...visibleNodes, ...mapAnchors] : visibleNodes}
           onPointer={(p) => {
             if (connectionRef.current) {
               setPointer(p);
@@ -383,6 +392,46 @@ export function NetworkCanvas(props: Props) {
             interactive={false}
           />
         )}
+        {view === 'topology' &&
+          mapAnchors
+            .filter(
+              (anchor) =>
+                editing ||
+                anchor.routeId === selectedRoute ||
+                !viewport ||
+                viewport.contains(latLng(anchor.position, view))
+            )
+            .map((anchor) => {
+              const markerWidth = parseFloat(theme.spacing(32));
+              const markerHeight = parseFloat(theme.spacing(14));
+              const coordinate =
+                anchor.geographicPoint &&
+                Number.isFinite(anchor.geographicPoint.lat) &&
+                Number.isFinite(anchor.geographicPoint.lng)
+                  ? `${anchor.geographicPoint.lat.toFixed(5)}, ${anchor.geographicPoint.lng.toFixed(5)}`
+                  : 'Sem ponto geográfico';
+              const icon = L.divIcon({
+                className: `jmap-node ${styles.node}`,
+                iconSize: [markerWidth * markerScale, markerHeight * markerScale],
+                iconAnchor: [(markerWidth * markerScale) / 2, (markerHeight * markerScale) / 2],
+                html: `<div class="${styles.nodeCard}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left;border-top-color:${theme.colors.warning.text}"><small>EXTREMIDADE DO MAPA</small><strong>${escape(anchor.name)}</strong><span>Vínculo pendente</span><small>${escape(coordinate)}</small></div>`,
+              });
+              return (
+                <Marker
+                  key={anchor.id}
+                  position={latLng(anchor.position, view)}
+                  icon={icon}
+                  alt={anchor.name}
+                  title={`${anchor.name} · Vínculo pendente`}
+                  keyboard
+                  draggable={editing && tool === 'move'}
+                  eventHandlers={{
+                    click: () => onSelectRoute(anchor.routeId),
+                    dragend: (event) => onMoveMapAnchor(anchor, point(event.target.getLatLng(), view)),
+                  }}
+                />
+              );
+            })}
         {visibleNodes
           .filter(
             (node) => editing || node.id === selectedNode || !viewport || viewport.contains(latLng(node.position, view))

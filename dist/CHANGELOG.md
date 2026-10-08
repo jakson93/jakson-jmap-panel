@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 (Homologação — 2026-10-08)
+
+- Corrige a compatibilidade de rotas antigas do mapa sem associação exata a POPs: desenha extremidades com vínculo pendente sem inventar equipamentos.
+- Mostra interfaces, trunks, sinais RX/TX e métricas adicionais no resumo lateral da topologia, usando o cadastro existente.
+- Adiciona acesso direto para vincular a mesma rota a POPs/equipamentos, preservando suas métricas e todo o traçado geográfico ao editar pela topologia.
+- Permite mover extremidades provisórias e manter desvios com desfazer/refazer/cancelar.
+- Acrescenta demonstração e testes de regressão para configurações antigas.
+
 ## 1.3.0 (Homologação — 2026-10-08)
 
 - Remodela o card flutuante de falha e oferece lista estável de incidentes, duração observada, última coleta, extremidades e ações de localizar/detalhar.

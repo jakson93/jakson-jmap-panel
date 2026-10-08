@@ -20,6 +20,8 @@ import { equipmentStatus, popStatus, routeStatus, statusColor, statusLabel } fro
 import { NetworkCanvas, EditTool } from './NetworkCanvas';
 import { MapView } from './MapView';
 import { OperationalConsole } from './OperationalConsole';
+import { RouteMonitoringSummary } from './RouteMonitoringSummary';
+import { mapRouteLayout } from '../legacyTopology';
 import { useOperationalReadings } from './useOperationalReadings';
 import {
   dependencyError,
@@ -66,9 +68,10 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     () => (view === 'topology' ? topologyNodes(nodes, expanded) : nodes),
     [view, nodes, expanded]
   );
+  const legacyLayout = React.useMemo(() => mapRouteLayout(current, nodes, expanded), [current, nodes, expanded]);
   const displayPaths = React.useMemo(
-    () => topologyPaths(current, nodes, expanded, editing),
-    [current, nodes, expanded, editing]
+    () => new Map([...topologyPaths(current, nodes, expanded, editing), ...legacyLayout.paths]),
+    [current, nodes, expanded, editing, legacyLayout.paths]
   );
   const { readings, referenceTime } = useOperationalReadings(data, timeRange, current.staleAfterSeconds, timeZone);
   const filtered = React.useMemo(
@@ -111,6 +114,11 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
   };
   const selectedNode = selection?.kind === 'node' ? nodes.find((n) => n.id === selection.id) : undefined;
   const selectedRoute = selection?.kind === 'route' ? routes.find((r) => r.id === selection.id) : undefined;
+  const selectedPath = selectedRoute
+    ? view === 'topology'
+      ? (displayPaths.get(selectedRoute.id) ?? [])
+      : routePath(selectedRoute, current, view, nodes)
+    : [];
   const conflicting = Boolean(draft && JSON.stringify(options) !== base);
   const unbound =
     view === 'topology' ? routes.filter((r) => routePath(r, current, view, nodes).length === 0).length : 0;
@@ -209,7 +217,8 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       from,
       to,
       { online: theme.colors.success.text, alert: theme.colors.warning.text, down: theme.colors.error.text },
-      bindRoute || undefined
+      bindRoute || undefined,
+      view === 'topology'
     );
     change(next);
     const route = bindRoute ? next.routes.find((r) => r.id === bindRoute) : next.routes[next.routes.length - 1];
@@ -237,7 +246,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     change({ ...current, routes: routes.map((r) => (r.id === selectedRoute.id ? { ...r, ...patch } : r)) });
   };
   const fit = () => {
-    if (!map.current || !nodes.length) {
+    if (!map.current || (!nodes.length && !legacyLayout.anchors.length)) {
       return;
     }
     const points: L.LatLngTuple[] = visibleNodes.map((node) => [
@@ -263,7 +272,6 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
         ? popStatus(selectedNode.pop, readings)
         : 'unknown';
   const value = (item?: string) => (item ? readings.get(item.trim())?.text : undefined) ?? '—';
-  const routeMetric = (id: string) => value(selectedRoute?.metrics.find((m) => m.id === id)?.zabbixItem);
   const endpointName = (side: 'source' | 'target') => {
     if (!selectedRoute) {
       return '';
@@ -406,6 +414,21 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             }}
             expanded={expanded}
             onTogglePop={togglePop}
+            mapRouteLayout={legacyLayout}
+            onMoveMapAnchor={(anchor, point) => {
+              const position = snapPoint(point, grid);
+              change({
+                ...current,
+                routes: routes.map((route) =>
+                  route.id === anchor.routeId
+                    ? {
+                        ...route,
+                        topologyUnboundPositions: { ...route.topologyUnboundPositions, [anchor.side]: position },
+                      }
+                    : route
+                ),
+              });
+            }}
           />
           {!editing && !selection && (
             <OperationalConsole
@@ -426,7 +449,10 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
               onOptionsChange={onOptionsChange}
               onLocate={(id) => {
                 selectRoute(id);
-                const path = routePath(routes.find((r) => r.id === id)!, current, view, nodes);
+                const path =
+                  view === 'topology'
+                    ? (displayPaths.get(id) ?? [])
+                    : routePath(routes.find((r) => r.id === id)!, current, view, nodes);
                 if (path.length) {
                   map.current?.fitBounds(L.latLngBounds(path.map((p) => [-p.y, p.x] as L.LatLngTuple)), {
                     padding: [180, 200],
@@ -561,7 +587,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
               Enquadrar
             </Button>
           </div>
-          {nodes.length === 0 && (
+          {nodes.length === 0 && legacyLayout.anchors.length === 0 && (
             <div className={styles.empty}>
               <Icon name="map-marker" size="xxl" />
               <h3>Sua rede começa aqui</h3>
@@ -746,16 +772,11 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 onClick={() => setSelection(undefined)}
               />
             </div>
-            <div className={styles.metrics}>
-              {(selectedRoute
-                ? [
-                    ['Capacidade', selectedRoute.capacityManualText || '—'],
-                    ['RX', routeMetric('rx')],
-                    ['TX', routeMetric('tx')],
-                    ['Download', routeMetric('download')],
-                    ['Upload', routeMetric('upload')],
-                  ]
-                : selectedNode?.equipment
+            {selectedRoute ? (
+              <RouteMonitoringSummary route={selectedRoute} readings={readings} />
+            ) : (
+              <div className={styles.metrics}>
+                {(selectedNode?.equipment
                   ? [
                       [
                         'CPU',
@@ -785,13 +806,14 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                       ['Latitude', selectedNode?.pop.lat.toFixed(5) ?? '—'],
                       ['Longitude', selectedNode?.pop.lng.toFixed(5) ?? '—'],
                     ]
-              ).map(([label, content]) => (
-                <div key={label}>
-                  <small>{label}</small>
-                  <strong>{content}</strong>
-                </div>
-              ))}
-            </div>
+                ).map(([label, content]) => (
+                  <div key={label}>
+                    <small>{label}</small>
+                    <strong>{content}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
             {selectedRoute && (
               <div className={styles.endpointInfo}>
                 <div>
@@ -803,6 +825,31 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                   <strong>{endpointName('target')}</strong>
                 </div>
                 <small>As extremidades reais são mantidas quando os POPs estão recolhidos.</small>
+                {legacyLayout.paths.has(selectedRoute.id) && (
+                  <small>
+                    Esta rota usa as extremidades desenhadas no mapa. Vincule aos POPs/equipamentos para completar a
+                    associação.
+                  </small>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    if (!editing) {
+                      start();
+                    }
+                    setTool('connect');
+                    setBindRoute(selectedRoute.id);
+                    const source = routeEndpoint(selectedRoute, 'source', current.pops);
+                    const target = routeEndpoint(selectedRoute, 'target', current.pops);
+                    setFromId(source ? JSON.stringify([source.popId, source.equipmentId ?? null]) : '');
+                    setToId(target ? JSON.stringify([target.popId, target.equipmentId ?? null]) : '');
+                    setFromPort(source?.portId ?? '');
+                    setToPort(target?.portId ?? '');
+                  }}
+                >
+                  Vincular extremidades desta rota
+                </Button>
               </div>
             )}
             {selectedNode && !selectedNode.equipment && !editing && (
@@ -1065,10 +1112,16 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 </Button>
                 <Button
                   variant="secondary"
-                  disabled={routePath(selectedRoute, current, view, nodes).length < 3}
+                  disabled={selectedPath.length < 3}
                   onClick={() => {
-                    const path = routePath(selectedRoute, current, view, nodes);
-                    change(updateRoutePath(current, selectedRoute.id, [path[0], path[path.length - 1]], view));
+                    change(
+                      updateRoutePath(
+                        current,
+                        selectedRoute.id,
+                        [selectedPath[0], selectedPath[selectedPath.length - 1]],
+                        view
+                      )
+                    );
                   }}
                 >
                   Limpar desvios
@@ -1112,7 +1165,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                   ? 'Atualizando dados…'
                   : 'Selecione um POP ou uma rota. Expanda um POP para ver seus equipamentos.')}
           </span>
-          {unbound > 0 && <span>{unbound} rota(s) sem extremidades vinculadas. Use Conectar → Vincular.</span>}
+          {unbound > 0 && <span>{unbound} rota(s) do mapa com vínculo pendente. Monitoramento preservado.</span>}
           <div className={styles.legend}>
             {(['online', 'alert', 'down', 'unknown', 'maintenance'] as const).map((s) => (
               <span key={s} style={{ color: statusColor(s, theme) }}>

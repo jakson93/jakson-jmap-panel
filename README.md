@@ -2,7 +2,7 @@
 
 Plugin de mapa para monitoramento de POPs e rotas de transporte em Grafana.
 
-## Versão de teste 1.2.0 — mapa e topologia por POP
+## Versão de teste 1.3.1 — mapa e topologia por POP
 
 A visualização original continua disponível, com aparência refinada dentro do mapa. A alternativa **Topologia** permite posicionar equipamentos, puxar ligações e ajustar caminhos em modo de edição, com desfazer, refazer e cancelar. Após **Aplicar alterações**, salve o dashboard no Grafana.
 
@@ -14,7 +14,9 @@ Use a branch `codex/mapa-topologia` em homologação. O original está preservad
 
 Veja o [passo a passo para testar, instalar e reverter](docs/TESTAR-E-REVERTER.md), incluindo um Grafana separado via `compose.homolog.yaml` e um dashboard com dados demonstrativos.
 
-[Baixar o ZIP compilado 1.3.0 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.0-20261008/jakson-jmap-panel-1.3.0.zip).
+[Baixar o ZIP compilado 1.3.1 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.1-20261008/jakson-jmap-panel-1.3.1.zip).
+
+A versão 1.3.1 mostra também rotas antigas sem associação, identificadas com vínculo pendente, e apresenta trunks, interfaces e sinais diretamente na topologia. Vincular uma rota existente pela topologia preserva seu traçado geográfico e monitoramento.
 
 A versão 1.3 remodela o card de falha e acrescenta análise de incidentes, atualização dos dados, dependências explícitas, filtros/visões salvas, histórico observado, alinhamento, posições bloqueadas e portas. Todas as métricas anteriores continuam disponíveis. Não há integração de notificações. O dashboard demonstrativo usa um período histórico fixo e dados sintéticos.
 

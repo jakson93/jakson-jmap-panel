@@ -1,5 +1,16 @@
-# Testar JMAP 1.3.0 antes de produção
+# Testar JMAP 1.3.1 antes de produção
 
+
+
+## Compatibilidade das rotas do mapa na versão 1.3.1
+
+As duas visualizações usam o mesmo cadastro de rotas. Alternar para **Topologia** não exige recadastrar interfaces, trunks, sinais RX/TX ou métricas extras. Selecione uma rota para consultar essas informações no resumo lateral; **Detalhes completos** mantém os gráficos e o histórico RX.
+
+Rotas antigas desenhadas livremente no mapa podem não ter `source`/`target` e seus pontos podem não coincidir exatamente com POPs. Elas agora aparecem na topologia com **Extremidades do mapa / Vínculo pendente**, preservando seu ID e monitoramento. Essas extremidades podem ser movidas em rascunho; suas posições são independentes das coordenadas geográficas.
+
+Para completar a associação, selecione a rota e use **Vincular extremidades desta rota**. O editor já seleciona **Vincular: nome da rota**; escolha os POPs/equipamentos reais e conecte. A operação mantém a mesma rota e todas as suas informações, sem alterar o traçado do mapa ao vincular pela topologia. Aplique e salve o dashboard. Não use **Criar nova rota** para reproduzir uma rota existente: uma nova rota é outro cadastro e começa sem métricas.
+
+Na homologação, abra **JMAP · Compatibilidade com rotas antigas (demonstração)**. A primeira rota não possui associação explícita e termina fora das coordenadas exatas dos POPs. Confira seu desenho na topologia, os dois trunks, sinais e a Latência; teste vincular, desfazer e cancelar. Use uma cópia do seu dashboard real para validar o mesmo fluxo com suas consultas.
 
 ## Operação e editor na versão 1.3.0
 
@@ -20,12 +31,12 @@ O dashboard sintético é histórico e tem período fixo; não representa coleta
 
 ### ZIP pronto para Portainer
 
-[Baixar build 1.3.0](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.0-20261008/jakson-jmap-panel-1.3.0.zip). Em uma pasta temporária do contêiner de homologação:
+[Baixar build 1.3.1](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.1-20261008/jakson-jmap-panel-1.3.1.zip). Em uma pasta temporária do contêiner de homologação:
 
 ```sh
-wget -O /tmp/jakson-jmap-panel-1.3.0.zip https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.0-20261008/jakson-jmap-panel-1.3.0.zip
-mkdir -p /tmp/jmap-1.3.0
-unzip /tmp/jakson-jmap-panel-1.3.0.zip -d /tmp/jmap-1.3.0
+wget -O /tmp/jakson-jmap-panel-1.3.1.zip https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.1-20261008/jakson-jmap-panel-1.3.1.zip
+mkdir -p /tmp/jmap-1.3.1
+unzip /tmp/jakson-jmap-panel-1.3.1.zip -d /tmp/jmap-1.3.1
 ```
 
 A pasta extraída `jakson-jmap-panel` contém `plugin.json`, `module.js` e `img`, sem precisar compilar. Guarde o plugin instalado e o JSON do dashboard antes de substituí-los. Instale o conteúdo no diretório de plugins de homologação, reinicie esse Grafana pelo Portainer e recarregue o navegador com `Ctrl+Shift+R`. Mantenha o volume de plugins persistente no contêiner.
@@ -117,7 +128,7 @@ Importe uma cópia do dashboard real na homologação e selecione as fontes de d
 
 Para tornar uma visualização o padrão, escolha **Visualização → Modo de exibição** no editor do painel e salve o dashboard. Aplicar um layout também grava a visualização usada na edição.
 
-Rotas antigas só têm extremidades inferidas quando as coordenadas coincidem com um único POP. Uma rota sem associação aparece no mapa, mas precisa ser vinculada para aparecer na topologia. Isso evita ligações inventadas por proximidade. Ligações entre equipamentos do mesmo POP compartilham a localização geográfica, então são melhor visualizadas na topologia.
+Rotas antigas só têm extremidades inferidas quando as coordenadas coincidem com um único POP. Uma rota sem associação também aparece na topologia, com extremidades identificadas como **Vínculo pendente**. Elas representam a rota do mapa; não são equipamentos inventados nem associações por proximidade. Isso evita ligações inventadas por proximidade. Ligações entre equipamentos do mesmo POP compartilham a localização geográfica, então são melhor visualizadas na topologia.
 
 Novas ligações começam sem métricas. Cadastre os itens da sua fonte de dados em **Cadastro de Rotas**; até lá, o status é **Sem dados**. O mapa e a topologia leem os dados retornados pelas consultas do painel. Não há alterações no Zabbix nem criação de links físicos na rede.
 

@@ -143,7 +143,8 @@ export function connectNodes(
   source: NetworkEndpoint,
   target: NetworkEndpoint,
   colors: Route['colors'],
-  existingRouteId?: string
+  existingRouteId?: string,
+  preserveGeography = false
 ): PanelOptions {
   if (sameEndpoint(source, target)) {
     return options;
@@ -174,7 +175,11 @@ export function connectNodes(
               source,
               target,
               topologyPoints: [],
-              points: route.points.length > 1 ? [points[0], ...route.points.slice(1, -1), points[1]] : points,
+              points: preserveGeography
+                ? route.points
+                : route.points.length > 1
+                  ? [points[0], ...route.points.slice(1, -1), points[1]]
+                  : points,
             }
           : route
       ),

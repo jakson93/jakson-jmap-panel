@@ -1,5 +1,26 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
+test('legacy map routes without POP associations display in topology with their configured trunk signals', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-legacy-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: /Origem · POP Centro → POP Norte/ }).click();
+  const inspector = panel.getByRole('region', { name: 'Detalhes da seleção' });
+  await expect(inspector.getByText('Trunks e interfaces', { exact: true })).toBeVisible();
+  const iface = inspector.getByRole('article', { name: 'Interface Interface A · Centro' });
+  await expect(iface.getByText(/dBm/)).toHaveCount(2);
+  await expect(inspector.getByText('Latência', { exact: true })).toBeVisible();
+  await inspector.getByRole('button', { name: 'Vincular extremidades desta rota', exact: true }).click();
+  await expect(panel.getByLabel('Rota para conectar')).toHaveValue('rota-0');
+  await expect(panel.getByLabel('Rota para conectar').locator('option')).toHaveCount(7);
+  await panel.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await expect(panel.getByRole('button', { name: /Origem · POP Centro → POP Norte/ })).toBeVisible();
+});
+
 test('combined operational filters never remove routes from the editor', async ({
   gotoPanelEditPage,
   readProvisionedDashboard,

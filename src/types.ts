@@ -88,6 +88,7 @@ export type Route = {
   source?: NetworkEndpoint;
   target?: NetworkEndpoint;
   topologyPoints?: CanvasPoint[];
+  topologyUnboundPositions?: { source?: CanvasPoint; target?: CanvasPoint };
   kind?: 'transport' | 'access' | 'backbone' | 'lan';
   dependsOnRouteIds?: string[];
   maintenance?: boolean;
