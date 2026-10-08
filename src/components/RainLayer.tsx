@@ -23,10 +23,15 @@ export function RainLayer({ rain }: { rain: RainMonitoring }) {
           icon={icon}
           title={`Alerta INMET · ${alert.event} · ${route.name}`}
         >
-          <Tooltip>
+          <Tooltip pane="tooltipPane" className="jmap-tooltip">
             Alerta de {alert.event.toLowerCase()} · {route.name}
           </Tooltip>
-          <Popup className={styles.popup} maxHeight={parseFloat(theme.spacing(40))}>
+          <Popup
+            pane="popupPane"
+            className={styles.popup}
+            maxHeight={parseFloat(theme.spacing(40))}
+            autoPanPaddingTopLeft={[parseFloat(theme.spacing(2)), parseFloat(theme.spacing(10))]}
+          >
             <strong>{alert.event} · INMET</strong>
             <p>{alert.severity}</p>
             <p>

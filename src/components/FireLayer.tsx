@@ -22,10 +22,15 @@ export function FireLayer({ fire }: { fire: FireMonitoring }) {
           icon={icon}
           title={`Foco de calor INPE · ${focus.exposures[0].name}`}
         >
-          <Tooltip>
+          <Tooltip pane="tooltipPane" className="jmap-tooltip">
             Foco de calor · {focus.exposures[0].distanceKm.toFixed(2)} km de {focus.exposures[0].name}
           </Tooltip>
-          <Popup className={styles.popup} maxHeight={parseFloat(theme.spacing(40))}>
+          <Popup
+            pane="popupPane"
+            className={styles.popup}
+            maxHeight={parseFloat(theme.spacing(40))}
+            autoPanPaddingTopLeft={[parseFloat(theme.spacing(2)), parseFloat(theme.spacing(10))]}
+          >
             <strong>Foco de calor · INPE</strong>
             <p>
               {new Date(focus.detectedAt).toLocaleString()} · {focus.satellite}
