@@ -1,14 +1,23 @@
 import { DataFrame, FieldType, GrafanaTheme2, TimeZone, getDisplayProcessor } from '@grafana/data';
 import { Pop, PopEquipment, Route } from './types';
 
-export type Status = 'online' | 'down' | 'alert' | 'unknown';
-export type Reading = { raw: unknown; text: string; values: unknown[]; times: number[] };
+export type Status = 'online' | 'down' | 'alert' | 'unknown' | 'maintenance';
+export type Reading = {
+  raw: unknown;
+  text: string;
+  values: unknown[];
+  times: number[];
+  sampleTime?: number;
+  stale?: boolean;
+  format?: (value: unknown) => string;
+};
 export type Readings = Map<string, Reading>;
 export const statusLabel: Record<Status, string> = {
   online: 'Online',
   down: 'Indisponível',
   alert: 'Em alerta',
   unknown: 'Sem dados',
+  maintenance: 'Manutenção',
 };
 
 export function readTelemetry(series: DataFrame[], theme: GrafanaTheme2, timeZone?: TimeZone): Readings {
@@ -19,17 +28,27 @@ export function readTelemetry(series: DataFrame[], theme: GrafanaTheme2, timeZon
     for (const field of fields) {
       const values: unknown[] = Array.from(field.values);
       let raw: unknown;
+      let sampleTime: number | undefined;
       for (let i = values.length - 1; i >= 0; i--) {
         if (values[i] !== null && values[i] !== undefined && values[i] !== '') {
           raw = values[i];
+          sampleTime = Number.isFinite(times[i]) ? times[i] : undefined;
           break;
         }
       }
       if (raw === undefined) {
         continue;
       }
-      const display = getDisplayProcessor({ field, theme, timeZone })(raw);
-      const entry = { raw, text: `${display.prefix ?? ''}${display.text}${display.suffix ?? ''}`, values, times };
+      const processor = getDisplayProcessor({ field, theme, timeZone });
+      const display = processor(raw);
+      const entry = {
+        raw,
+        text: `${display.prefix ?? ''}${display.text}${display.suffix ?? ''}`,
+        values,
+        times,
+        sampleTime,
+        format: (value: unknown) => processor(value).text,
+      };
       for (const label of [
         fields.length === 1 ? frame.name : undefined,
         field.name,
@@ -55,7 +74,7 @@ export function numeric(value: unknown): number | undefined {
 
 export function itemStatus(item: string | undefined, onlineValue: string | undefined, readings: Readings): Status {
   const value = item ? readings.get(item.trim()) : undefined;
-  if (!value) {
+  if (!value || value.stale) {
     return 'unknown';
   }
   const normalize = (v: unknown) =>
@@ -69,6 +88,9 @@ export function itemStatus(item: string | undefined, onlineValue: string | undef
 }
 
 export function equipmentStatus(equipment: PopEquipment, readings: Readings): Status {
+  if (equipment.maintenance) {
+    return 'maintenance';
+  }
   return itemStatus(equipment.statusItem, equipment.onlineValue, readings);
 }
 
@@ -80,16 +102,25 @@ export function popStatus(pop: Pop, readings: Readings): Status {
   if (statuses.length === 0 || statuses.includes('unknown')) {
     return 'unknown';
   }
+  if (statuses.every((status) => status === 'maintenance')) {
+    return 'maintenance';
+  }
   return 'online';
 }
 
 export function routeStatus(route: Route, readings: Readings): Status {
+  if (route.maintenance) {
+    return 'maintenance';
+  }
   const base = itemStatus(route.interfaceItem, route.onlineValue, readings);
-  if (base === 'down' || !route.thresholds?.enabled) {
+  if (base === 'down' || base === 'unknown' || !route.thresholds?.enabled) {
     return base;
   }
   const threshold = route.thresholds;
-  const metric = (id: string) => numeric(readings.get(route.metrics.find((m) => m.id === id)?.zabbixItem ?? '')?.raw);
+  const metric = (id: string) => {
+    const reading = readings.get(route.metrics.find((m) => m.id === id)?.zabbixItem ?? '');
+    return reading?.stale ? undefined : numeric(reading?.raw);
+  };
   const low = (id: string, limit?: number) => limit !== undefined && metric(id) !== undefined && metric(id)! <= limit;
   const traffic = [metric('download'), metric('upload')].filter((v): v is number => v !== undefined);
   let flaps = 0;
@@ -122,4 +153,5 @@ export const statusColor = (status: Status, theme: GrafanaTheme2) =>
     alert: theme.colors.warning.text,
     down: theme.colors.error.text,
     unknown: theme.colors.text.secondary,
+    maintenance: theme.colors.info.text,
   })[status];

@@ -1,14 +1,26 @@
 import React from 'react';
+import { migratePresetIcon } from '../iconUrl';
 import L from 'leaflet';
-import { DataFrame, FieldType, PanelData, TimeRange, TimeZone } from '@grafana/data';
+import { DataFrame, FieldType, LoadingState, PanelData, TimeRange, TimeZone } from '@grafana/data';
 import { useTheme2, useStyles2, Icon } from '@grafana/ui';
 import { mapPresentation } from './mapPresentation';
 import { MapLabels } from './MapLabels';
-import { readTelemetry } from '../networkTelemetry';
+import {
+  readTelemetry,
+  routeStatus,
+  popStatus,
+  equipmentStatus,
+  statusLabel as telemetryStatusLabel,
+  statusColor as telemetryStatusColor,
+} from '../networkTelemetry';
+import { ViewportCapture } from './ViewportCapture';
+import { OperationalConsole } from './OperationalConsole';
+import { useOperationalReadings } from './useOperationalReadings';
+import { emptyFilter, filterNetwork, routeHistory } from '../operationalModel';
 import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
-import { PanelOptions } from '../types';
+import { PanelOptions, NetworkFilter, SavedNetworkView } from '../types';
 import { getLastMapView, setLastMapView } from '../mapState';
 
 type Props = {
@@ -20,6 +32,9 @@ type Props = {
   initialRouteId?: string;
   initialPopId?: string;
   tools?: React.ReactNode;
+  filter?: NetworkFilter;
+  onFilter?: (filter: NetworkFilter) => void;
+  onRestore?: (view: SavedNetworkView) => void;
 };
 
 const DEFAULT_CENTER_LAT = -23.5505;
@@ -49,11 +64,6 @@ const distanceKm = (points: Array<{ lat: number; lng: number }>): number => {
   return total;
 };
 
-type ItemValue = {
-  text: string;
-  raw: unknown;
-};
-
 type SeriesWithTime = {
   values: number[];
   times: number[];
@@ -77,7 +87,7 @@ const escapeHtmlAttr = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const normalizePopIconUrl = (value?: string) => {
-  const raw = value?.trim() ?? '';
+  const raw = migratePresetIcon(value?.trim() ?? '');
   if (!raw) {
     return '';
   }
@@ -260,53 +270,7 @@ const frameMatchesItems = (frame: DataFrame, itemKeys: Set<string>) => {
 const filterSeriesByItems = (series: DataFrame[], itemKeys: Set<string>) =>
   series.filter((frame) => frameMatchesItems(frame, itemKeys));
 
-const normalizeValue = (value: unknown) =>
-  String(value ?? '')
-    .trim()
-    .toLowerCase();
-
-const resolveRouteStatus = (interfaceItem?: string, onlineValue?: string, itemValueMap?: Map<string, ItemValue>) => {
-  if (!interfaceItem || !itemValueMap) {
-    return 'unknown';
-  }
-  const entry = itemValueMap.get(interfaceItem);
-  if (!entry) {
-    return 'unknown';
-  }
-  const expected = normalizeValue(onlineValue ?? '1');
-  const rawNormalized = normalizeValue(entry.raw);
-  const textNormalized = normalizeValue(entry.text);
-  return rawNormalized === expected || textNormalized === expected ? 'online' : 'down';
-};
-
-const countFlaps = (series: { values: number[]; times: number[] }, windowMs: number) => {
-  if (series.values.length < 2) {
-    return 0;
-  }
-  const latestTime = series.times[series.times.length - 1];
-  if (!latestTime) {
-    return 0;
-  }
-  const windowStart = latestTime - windowMs;
-  let count = 0;
-  for (let i = series.values.length - 1; i > 0; i--) {
-    if (series.times[i] < windowStart) {
-      break;
-    }
-    if (series.values[i] !== series.values[i - 1]) {
-      count += 1;
-    }
-  }
-  return count;
-};
-
-type SparklineProps = {
-  values?: number[];
-  width?: number;
-  height?: number;
-  color: string;
-};
-
+type SparklineProps = { values?: number[]; width?: number; height?: number; color: string };
 const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) => {
   const theme = useTheme2();
   if (!values || values.length < 2) {
@@ -719,6 +683,11 @@ function CaptureMapRef({ onReady }: { onReady: (map: L.Map) => void }) {
   React.useEffect(() => {
     onReady(map);
   }, [map, onReady]);
+  React.useEffect(() => {
+    const resize = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    resize.observe(map.getContainer());
+    return () => resize.disconnect();
+  }, [map]);
   return null;
 }
 
@@ -744,8 +713,23 @@ export function MapView({
   initialRouteId,
   initialPopId,
   tools,
+  filter: externalFilter,
+  onFilter,
+  onRestore,
 }: Props) {
   const theme = useTheme2();
+  const [localFilter, setLocalFilter] = React.useState<NetworkFilter>(emptyFilter);
+  const filter = externalFilter ?? localFilter;
+  const { readings: operationalReadings, referenceTime } = useOperationalReadings(
+    data,
+    timeRange,
+    options.staleAfterSeconds,
+    timeZone
+  );
+  const filtered = React.useMemo(
+    () => filterNetwork(options, filter, operationalReadings),
+    [options, filter, operationalReadings]
+  );
   const presentation = useStyles2(mapPresentation);
   const centerLat = Number.isFinite(options.centerLat) ? options.centerLat : DEFAULT_CENTER_LAT;
   const centerLng = Number.isFinite(options.centerLng) ? options.centerLng : DEFAULT_CENTER_LNG;
@@ -763,10 +747,10 @@ export function MapView({
     name: string;
     series?: { values: number[]; times: number[] };
   } | null>(null);
+  const [viewport, setViewport] = React.useState<L.LatLngBounds>();
   const [currentZoom, setCurrentZoom] = React.useState(zoom);
   const [visibleLabels, setVisibleLabels] = React.useState<Set<string>>(new Set());
   const [hitboxReady, setHitboxReady] = React.useState(false);
-  const [activeDownRouteIndex, setActiveDownRouteIndex] = React.useState(0);
   const [statsCollapsed, setStatsCollapsed] = React.useState(true);
   const [eventSearch, setEventSearch] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -1077,60 +1061,18 @@ export function MapView({
   };
 
   const computeRouteStatus = React.useCallback(
-    (route: (typeof routes)[number]) => {
-      const base = resolveRouteStatus(route.interfaceItem, route.onlineValue, itemValueMap);
-      if (base === 'down') {
-        return 'down';
-      }
-      const thresholds = route.thresholds;
-      if (!thresholds?.enabled) {
-        return base;
-      }
-      const rxValue = getRouteMetricNumeric(route, 'rx');
-      const txValue = getRouteMetricNumeric(route, 'tx');
-      const downloadValue = getRouteMetricNumeric(route, 'download');
-      const uploadValue = getRouteMetricNumeric(route, 'upload');
-      const bandwidthValue =
-        downloadValue !== null && uploadValue !== null
-          ? Math.max(downloadValue, uploadValue)
-          : (downloadValue ?? uploadValue ?? null);
-      const flappingWindowMs = (thresholds.flappingWindowMin ?? 0) * 60000;
-      const flappingCount = thresholds.flappingCount ?? 0;
-      const series = route.interfaceItem ? itemSeriesTimeMap.get(route.interfaceItem) : undefined;
-      const flaps = series && flappingWindowMs > 0 ? countFlaps(series, flappingWindowMs) : 0;
-
-      const inAlert =
-        (thresholds.rxLow !== undefined && rxValue !== null && rxValue <= thresholds.rxLow) ||
-        (thresholds.txLow !== undefined && txValue !== null && txValue <= thresholds.txLow) ||
-        (thresholds.bandwidthHigh !== undefined &&
-          bandwidthValue !== null &&
-          bandwidthValue >= thresholds.bandwidthHigh) ||
-        (flappingCount > 0 && flaps >= flappingCount);
-
-      return inAlert ? 'alert' : base;
-    },
-    [getRouteMetricNumeric, itemSeriesTimeMap, itemValueMap]
+    (route: (typeof routes)[number]) => routeStatus(route, operationalReadings),
+    [operationalReadings]
   );
-
   const computePopStatus = React.useCallback(
-    (pop: (typeof pops)[number]) => {
-      const statusItems = (pop.equipments ?? []).filter((equipment) => equipment.statusItem?.trim());
-      if (statusItems.length === 0) {
-        return 'unknown';
-      }
-
-      const statuses = statusItems.map((equipment) =>
-        resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap)
-      );
-      return statuses.includes('down') ? 'down' : statuses.includes('unknown') ? 'unknown' : 'online';
-    },
-    [itemValueMap]
+    (pop: (typeof pops)[number]) => popStatus(pop, operationalReadings),
+    [operationalReadings]
   );
 
   const selectedRouteStatus = selectedRoute ? computeRouteStatus(selectedRoute) : 'unknown';
   const mapLabels = React.useMemo(
     () =>
-      pops
+      filtered.pops
         .filter((p) => p.showName !== false)
         .map((pop) => ({
           id: pop.id,
@@ -1143,21 +1085,24 @@ export function MapView({
           ),
           priority: selectedPopId === pop.id ? 3 : computePopStatus(pop) === 'down' ? 2 : 0,
         })),
-    [pops, mapZoomScale, selectedPopId, computePopStatus]
+    [filtered.pops, mapZoomScale, selectedPopId, computePopStatus]
   );
-  const selectedRouteStatusLabel =
-    selectedRouteStatus === 'online'
-      ? 'Online'
-      : selectedRouteStatus === 'down'
-        ? 'Down'
-        : selectedRouteStatus === 'alert'
-          ? 'Degradado'
-          : 'Sem dados';
-  const selectedRouteDownTime =
-    selectedRoute?.interfaceItem && selectedRouteStatus === 'down'
-      ? getLastChangeMinutes(selectedRoute.interfaceItem, itemSeriesTimeMap)
-      : null;
-  const downRoutes = routes.filter((route) => route.points.length > 1 && computeRouteStatus(route) === 'down');
+  const selectedRouteStatusLabel = telemetryStatusLabel[selectedRouteStatus];
+  const selectedOutage =
+    selectedRoute && selectedRouteStatus === 'down'
+      ? [
+          ...routeHistory(
+            selectedRoute,
+            operationalReadings,
+            timeRange.from.valueOf(),
+            referenceTime,
+            (options.staleAfterSeconds ?? 300) * 1000
+          ).incidents,
+        ]
+          .reverse()
+          .find((event) => event.end === undefined)
+      : undefined;
+  const selectedRouteDownTime = selectedOutage ? (referenceTime - selectedOutage.start) / 60000 : null;
   const normalizedEventSearch = eventSearch.trim().toLowerCase();
   const routeIncidentItems = React.useMemo(() => {
     const toPriority = (status: string) => {
@@ -1177,21 +1122,8 @@ export function MapView({
       .map((route) => {
         const status = computeRouteStatus(route);
         const statusColor =
-          status === 'online'
-            ? route.colors.online
-            : status === 'down'
-              ? route.colors.down
-              : status === 'alert'
-                ? route.colors.alert
-                : theme.colors.text.secondary;
-        const statusLabel =
-          status === 'online'
-            ? 'Online'
-            : status === 'down'
-              ? 'Critico'
-              : status === 'alert'
-                ? 'Degradado'
-                : 'Sem dados';
+          status === 'unknown' || status === 'maintenance' ? telemetryStatusColor(status, theme) : route.colors[status];
+        const statusLabel = telemetryStatusLabel[status];
 
         return {
           id: route.id,
@@ -1208,7 +1140,7 @@ export function MapView({
         }
         return a.name.localeCompare(b.name, 'pt-BR');
       });
-  }, [computeRouteStatus, routes, theme.colors.text.secondary]);
+  }, [computeRouteStatus, routes, theme]);
 
   const visibleRouteIncidents = React.useMemo(() => {
     if (!normalizedEventSearch) {
@@ -1247,17 +1179,6 @@ export function MapView({
       .sort((a, b) => (a.rxNumeric ?? Number.POSITIVE_INFINITY) - (b.rxNumeric ?? Number.POSITIVE_INFINITY))
       .slice(0, 3);
   }, [getMetricValue, getNumericValue, routes]);
-
-  React.useEffect(() => {
-    if (downRoutes.length <= 1) {
-      setActiveDownRouteIndex(0);
-      return;
-    }
-    const interval = setInterval(() => {
-      setActiveDownRouteIndex((prev) => (prev + 1) % downRoutes.length);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [downRoutes.length]);
 
   const formatMinutes = (value: number | null) => {
     if (value === null || value === undefined || Number.isNaN(value)) {
@@ -1608,7 +1529,7 @@ export function MapView({
                           marginBottom: 4,
                         }}
                       >
-                        SLA - Tempo fora
+                        {selectedOutage?.boundedStart ? 'Tempo mínimo observado em falha' : 'Tempo observado em falha'}
                       </div>
                       <div style={{ fontSize: 18, fontWeight: 700, color: '#f87171' }}>
                         {formatMinutes(selectedRouteDownTime)}
@@ -2105,7 +2026,7 @@ export function MapView({
                 ) : (
                   selectedPop.equipments.map((equipment) => {
                     const statusValue = equipment.statusItem ? getMetricValue(equipment.statusItem) : undefined;
-                    const status = resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap);
+                    const status = equipmentStatus(equipment, operationalReadings);
                     const lastChange = getLastChangeMinutes(equipment.statusItem, itemSeriesTimeMap);
                     const customMetrics = equipment.metrics ?? [];
                     const builtInMetrics = [
@@ -2170,7 +2091,7 @@ export function MapView({
                                     : theme.colors.text.secondary,
                             }}
                           >
-                            {status === 'online' ? 'Online' : status === 'down' ? 'Down' : 'Sem dados'}
+                            {telemetryStatusLabel[status]}
                           </span>
                         </div>
 
@@ -2258,6 +2179,7 @@ export function MapView({
               onVisible={updateVisibleLabels}
             />
           )}
+          <ViewportCapture onBounds={setViewport} />
           <CaptureLeafletView />
           <CaptureMapInteraction onInteract={() => {}} />
           <CaptureMapRef
@@ -2277,12 +2199,19 @@ export function MapView({
             maxZoom={20}
             crossOrigin
           />
-          {routes.map((route) => {
-            if (route.points.length <= 1) {
+          {filtered.routes.map((route) => {
+            if (
+              route.points.length <= 1 ||
+              (viewport &&
+                !viewport.intersects(L.latLngBounds(route.points.map((p) => [p.lat, p.lng] as L.LatLngTuple))))
+            ) {
               return null;
             }
             const status = computeRouteStatus(route);
-            const statusColor = status === 'unknown' ? theme.colors.text.secondary : route.colors[status];
+            const statusColor =
+              status === 'unknown' || status === 'maintenance'
+                ? telemetryStatusColor(status, theme)
+                : route.colors[status];
             const statusClass =
               status === 'unknown'
                 ? 'jmap-route--unknown'
@@ -2344,235 +2273,152 @@ export function MapView({
               </React.Fragment>
             );
           })}
-          {pops.map((pop) => {
-            const popStatus = computePopStatus(pop);
-            const iconUrl = normalizePopIconUrl(
-              pop.iconUrl || 'public/plugins/jakson-jmap-panel/img/pop-datacenter.svg'
-            );
-            const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
-            const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
-            const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
-            const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
-            const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
-            const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
-            const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
-            const tooltipOffsetX = Math.round(iconSizePx / 2) + parseFloat(theme.spacing(1));
-            const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
-            const statusClass = popStatus === 'down' ? 'jmap-pop-icon--down' : '';
-            const popColor =
-              popStatus === 'down'
-                ? theme.colors.error.text
-                : popStatus === 'online'
-                  ? theme.colors.success.text
-                  : theme.colors.text.secondary;
-            const icon = iconUrl
-              ? L.divIcon({
-                  className: '',
-                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;border-color:${popColor};">
+          {filtered.pops
+            .filter((pop) => !viewport || viewport.contains([pop.lat, pop.lng]))
+            .map((pop) => {
+              const popStatus = computePopStatus(pop);
+              const iconUrl = normalizePopIconUrl(
+                pop.iconUrl || 'public/plugins/jakson-jmap-panel/img/pop-datacenter.svg'
+              );
+              const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
+              const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
+              const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
+              const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
+              const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
+              const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
+              const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
+              const tooltipOffsetX = Math.round(iconSizePx / 2) + parseFloat(theme.spacing(1));
+              const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
+              const statusClass = popStatus === 'down' ? 'jmap-pop-icon--down' : '';
+              const popColor =
+                popStatus === 'down'
+                  ? theme.colors.error.text
+                  : popStatus === 'online'
+                    ? theme.colors.success.text
+                    : theme.colors.text.secondary;
+              const icon = iconUrl
+                ? L.divIcon({
+                    className: '',
+                    html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;border-color:${popColor};">
                   <img class="jmap-pop-icon__img" style="width:${iconInnerSizePx}px;height:${iconInnerSizePx}px;" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
                  </div>`,
-                  iconSize: [iconSizePx, iconSizePx],
-                  iconAnchor: [iconSizePx / 2, iconSizePx / 2],
-                })
-              : L.divIcon({
-                  className: '',
-                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;"></div>`,
-                  iconSize: [iconSizePx, iconSizePx],
-                  iconAnchor: [iconSizePx / 2, iconSizePx / 2],
-                });
-            return (
-              <React.Fragment key={pop.id}>
-                {pop.showName !== false && (
-                  <Marker
-                    position={[pop.lat, pop.lng]}
-                    icon={icon}
-                    title={pop.name || 'Sem nome'}
-                    alt={pop.name || 'Sem nome'}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedRouteId(null);
-                        setSelectedPopId(pop.id);
-                      },
-                    }}
-                  >
-                    <Tooltip
-                      key={`${labelMode}-${visibleLabels.has(pop.id)}`}
-                      className={`jmap-tooltip ${presentation.popLabel}`}
-                      direction="right"
-                      permanent={labelMode === 'smart' ? visibleLabels.has(pop.id) : labelMode !== 'hover'}
-                      offset={[tooltipOffsetX, 0]}
-                      interactive={false}
+                    iconSize: [iconSizePx, iconSizePx],
+                    iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+                  })
+                : L.divIcon({
+                    className: '',
+                    html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;"></div>`,
+                    iconSize: [iconSizePx, iconSizePx],
+                    iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+                  });
+              return (
+                <React.Fragment key={pop.id}>
+                  {pop.showName !== false && (
+                    <Marker
+                      position={[pop.lat, pop.lng]}
+                      icon={icon}
+                      title={pop.name || 'Sem nome'}
+                      alt={pop.name || 'Sem nome'}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedRouteId(null);
+                          setSelectedPopId(pop.id);
+                        },
+                      }}
                     >
-                      <div className={presentation.labelTitle}>
-                        <span style={{ background: popColor }} />
-                        {pop.name || 'Sem nome'}
-                      </div>
-                      {(labelMode === 'details' || labelMode === 'hover') && (
-                        <div
-                          style={{
-                            color:
-                              popStatus === 'down'
-                                ? theme.colors.error.text
-                                : popStatus === 'online'
-                                  ? theme.colors.success.text
-                                  : theme.colors.text.secondary,
-                            fontSize: theme.typography.bodySmall.fontSize,
-                          }}
-                        >
-                          {pop.equipments.length} equipamento(s) ·{' '}
-                          {popStatus === 'down' ? 'Indisponível' : popStatus === 'online' ? 'Online' : 'Sem dados'}
+                      <Tooltip
+                        key={`${labelMode}-${visibleLabels.has(pop.id)}`}
+                        className={`jmap-tooltip ${presentation.popLabel}`}
+                        direction="right"
+                        permanent={labelMode === 'smart' ? visibleLabels.has(pop.id) : labelMode !== 'hover'}
+                        offset={[tooltipOffsetX, 0]}
+                        interactive={false}
+                      >
+                        <div className={presentation.labelTitle}>
+                          <span style={{ background: popColor }} />
+                          {pop.name || 'Sem nome'}
                         </div>
-                      )}
-                    </Tooltip>
-                  </Marker>
-                )}
-                {pop.showName === false && (
-                  <Marker
-                    position={[pop.lat, pop.lng]}
-                    icon={icon}
-                    title={pop.name || 'Sem nome'}
-                    alt={pop.name || 'Sem nome'}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedRouteId(null);
-                        setSelectedPopId(pop.id);
-                      },
-                    }}
-                  />
-                )}
-                {hitboxReady && (
-                  <CircleMarker
-                    center={[pop.lat, pop.lng]}
-                    radius={hitboxRadius}
-                    pane="hitboxPane"
-                    pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
-                    interactive
-                    bubblingMouseEvents={false}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedRouteId(null);
-                        setSelectedPopId(pop.id);
-                      },
-                    }}
-                  />
-                )}
-              </React.Fragment>
-            );
-          })}
+                        {(labelMode === 'details' || labelMode === 'hover') && (
+                          <div
+                            style={{
+                              color:
+                                popStatus === 'down'
+                                  ? theme.colors.error.text
+                                  : popStatus === 'online'
+                                    ? theme.colors.success.text
+                                    : theme.colors.text.secondary,
+                              fontSize: theme.typography.bodySmall.fontSize,
+                            }}
+                          >
+                            {pop.equipments.length} equipamento(s) ·{' '}
+                            {popStatus === 'down' ? 'Indisponível' : popStatus === 'online' ? 'Online' : 'Sem dados'}
+                          </div>
+                        )}
+                      </Tooltip>
+                    </Marker>
+                  )}
+                  {pop.showName === false && (
+                    <Marker
+                      position={[pop.lat, pop.lng]}
+                      icon={icon}
+                      title={pop.name || 'Sem nome'}
+                      alt={pop.name || 'Sem nome'}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedRouteId(null);
+                          setSelectedPopId(pop.id);
+                        },
+                      }}
+                    />
+                  )}
+                  {hitboxReady && (
+                    <CircleMarker
+                      center={[pop.lat, pop.lng]}
+                      radius={hitboxRadius}
+                      pane="hitboxPane"
+                      pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
+                      interactive
+                      bubblingMouseEvents={false}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedRouteId(null);
+                          setSelectedPopId(pop.id);
+                        },
+                      }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
         </MapContainer>
-        {downRoutes.length > 0 &&
-          !selectedRouteId &&
-          (() => {
-            const currentDownRoute = downRoutes[activeDownRouteIndex];
-            if (!currentDownRoute) {
-              return null;
-            }
-            const isMultiple = downRoutes.length > 1;
-            return (
-              <div
-                className="jmap-autofocus-panel"
-                style={{
-                  position: 'absolute',
-                  left: 20,
-                  bottom: 20,
-                  zIndex: 800,
-                  minWidth: 280,
-                  maxWidth: 340,
-                  padding: '14px 18px',
-                  background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.88) 100%)',
-                  border: '1px solid rgba(239, 68, 68, 0.5)',
-                  borderRadius: 14,
-                  boxShadow: '0 0 30px rgba(239, 68, 68, 0.25), inset 0 0 20px rgba(239, 68, 68, 0.08)',
-                  backdropFilter: 'blur(12px)',
-                  color: '#f1f5f9',
-                  fontFamily: '"Segoe UI", Roboto, "Helvetica Neue", sans-serif',
-                  animation: 'jmap-hologram-fade 0.4s ease-out',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: -2,
-                    left: 20,
-                    right: 20,
-                    height: 3,
-                    background: 'linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.8), transparent)',
-                    borderRadius: 2,
-                    animation: 'jmap-hologram-scan 2s ease-in-out infinite',
-                  }}
-                />
-                <div
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
-                >
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 700,
-                      color: '#fca5a5',
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.5,
-                    }}
-                  >
-                    {isMultiple ? 'Multiplas Rotas em Falha' : 'Rota em Falha'}
-                  </div>
-                  <div
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: '#ef4444',
-                      boxShadow: '0 0 10px #ef4444',
-                      animation: 'jmap-blink 1s ease-in-out infinite',
-                    }}
-                  />
-                </div>
-                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-                  {currentDownRoute.name || 'Sem nome'}
-                </div>
-                {isMultiple && (
-                  <div
-                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveDownRouteIndex((prev) => (prev - 1 + downRoutes.length) % downRoutes.length)
-                      }
-                      style={{
-                        background: 'rgba(239, 68, 68, 0.2)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: 6,
-                        padding: '4px 12px',
-                        color: '#fca5a5',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                      }}
-                    >
-                      ◀
-                    </button>
-                    <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: '#94a3b8' }}>
-                      {activeDownRouteIndex + 1} / {downRoutes.length}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveDownRouteIndex((prev) => (prev + 1) % downRoutes.length)}
-                      style={{
-                        background: 'rgba(239, 68, 68, 0.2)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: 6,
-                        padding: '4px 12px',
-                        color: '#fca5a5',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                      }}
-                    >
-                      ▶
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+        {!selectedRouteId && !selectedPopId && (
+          <OperationalConsole
+            options={options}
+            queryError={data.state === LoadingState.Error}
+            readings={operationalReadings}
+            referenceTime={referenceTime}
+            timeRange={timeRange}
+            filter={filter}
+            onFilter={onFilter ?? setLocalFilter}
+            view="map"
+            expandedPops={[]}
+            onRestore={(saved) => {
+              (onFilter ?? setLocalFilter)(saved.filter);
+              onRestore?.(saved);
+            }}
+            onOptionsChange={onOptionsChange}
+            onLocate={(id) => {
+              const route = routes.find((r) => r.id === id);
+              if (route) {
+                focusRoute(id);
+              }
+            }}
+            onDetails={(id) => {
+              setSelectedRouteId(id);
+              setSelectedPopId(null);
+            }}
+          />
+        )}
         <button
           type="button"
           onClick={() => setStatsCollapsed((prev) => !prev)}

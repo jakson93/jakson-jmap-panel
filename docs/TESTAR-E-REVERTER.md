@@ -1,4 +1,36 @@
-# Testar JMAP 1.2.0 antes de produção
+# Testar JMAP 1.3.0 antes de produção
+
+
+## Operação e editor na versão 1.3.0
+
+O ID continua `jakson-jmap-panel`; a permissão existente para plugin não assinado permanece válida. A versão 1.2.0 continua disponível como ponto de reversão.
+
+1. No mapa ou topologia, confira o novo card de falha. Ele mostra extremidades, última amostra e duração observada. A lista permite ver todas as falhas e não troca de rota automaticamente.
+2. Abra **Analisar rede → Incidentes** para falhas, alertas, manutenção e dados antigos. **Localizar** enquadra a ligação; **Detalhes da rota** conserva os indicadores e gráficos originais. Dependências aparecem somente quando cadastradas.
+3. Em **Filtros e visões**, combine status, tipo e POPs. A busca inclui nomes e a região cadastrada do POP. **Incluir rotas das quais a seleção depende** acrescenta dependências explícitas. Os filtros apenas mudam a exibição. O editor e o inventário mantêm o cadastro completo.
+4. Dê um nome e use **Salvar visão atual**. A visão guarda modo, filtros e POPs expandidos. Salve também o dashboard no Grafana, recarregue e restaure a visão para verificar persistência. Faça isso em uma cópia editável do dashboard.
+5. Em **Histórico**, escolha a rota. A disponibilidade usa somente intervalos conhecidos; confira a cobertura, lacunas e início parcial. O tempo médio de recuperação exige eventos completos. São cálculos das amostras recebidas no período do Grafana, sem consulta externa de eventos nem certificação de SLA. O cadastro atual de manutenção não é aplicado retroativamente.
+6. Em **Editar layout**, selecione um POP/equipamento e teste bloqueio de posição, alinhamento horizontal/vertical e grade. Movimentação livre está disponível ao desativar **Grade**, ou configurando tamanho zero. O bloqueio se aplica à posição na topologia; coordenadas geográficas permanecem independentes.
+7. Cadastre portas no equipamento. Selecione origem/destino e portas em **Conectar**, ou atribua portas na rota já vinculada. Uma porta ocupada não pode ser reutilizada por outra rota; ligações sem porta específica continuam permitidas. Configure o tipo e dependências na seleção da rota. Tente uma dependência circular e confira a mensagem de rejeição.
+8. Teste **Desfazer**, **Refazer**, **Cancelar** e **Aplicar alterações**. Aplicar atualiza as opções do painel; salve o dashboard para persistir. Confira novamente todos os itens e métricas do original após recarregar.
+
+**Idade dos dados:** em **Operação da rede → Idade máxima da amostra**, o padrão é 300 segundos. Ajuste à frequência real do datasource. Ao exceder o limite, o último valor continua disponível para consulta, mas o status passa a **Sem dados / Dados antigos**. Valores sem timestamp são identificados como sem horário de coleta. Períodos históricos usam o final consultado como referência; o modo ao vivo usa o relógio atual. Uma consulta que falha é indicada separadamente.
+
+O dashboard sintético é histórico e tem período fixo; não representa coleta ao vivo. Para testar dados antigos, altere o final do período para **agora**. Para testar dados reais, importe uma cópia do seu dashboard e mantenha as consultas originais na instância de homologação.
+
+### ZIP pronto para Portainer
+
+[Baixar build 1.3.0](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.0-20261008/jakson-jmap-panel-1.3.0.zip). Em uma pasta temporária do contêiner de homologação:
+
+```sh
+wget -O /tmp/jakson-jmap-panel-1.3.0.zip https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.0-20261008/jakson-jmap-panel-1.3.0.zip
+mkdir -p /tmp/jmap-1.3.0
+unzip /tmp/jakson-jmap-panel-1.3.0.zip -d /tmp/jmap-1.3.0
+```
+
+A pasta extraída `jakson-jmap-panel` contém `plugin.json`, `module.js` e `img`, sem precisar compilar. Guarde o plugin instalado e o JSON do dashboard antes de substituí-los. Instale o conteúdo no diretório de plugins de homologação, reinicie esse Grafana pelo Portainer e recarregue o navegador com `Ctrl+Shift+R`. Mantenha o volume de plugins persistente no contêiner.
+
+Para reverter, restaure a pasta anterior e o JSON exportado do dashboard. A versão anterior pode não interpretar as novas opções de operação e portas, por isso o backup do JSON acompanha o da pasta.
 
 ## Revisão visual 1.2.0
 

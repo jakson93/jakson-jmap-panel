@@ -1,4 +1,6 @@
 import React from 'react';
+import { migratePresetIcon } from '../iconUrl';
+import { ViewportCapture } from './ViewportCapture';
 import L from 'leaflet';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
@@ -156,6 +158,7 @@ export function NetworkCanvas(props: Props) {
   const connectionRef = React.useRef<NetworkNode>();
   const suppressClick = React.useRef(false);
   const [pointer, setPointer] = React.useState<CanvasPoint>();
+  const [viewport, setViewport] = React.useState<L.LatLngBounds>();
   const [zoom, setZoom] = React.useState(0);
   const mapRef = React.useRef<L.Map>();
   const visibleNodes = React.useMemo(
@@ -229,6 +232,7 @@ export function NetworkCanvas(props: Props) {
         doubleClickZoom={false}
         className={`${styles.map} ${view === 'topology' ? styles.topology : options.mapTone !== 'original' && !['google_satellite', 'google_hybrid', 'carto_dark'].includes(options.mapProvider) ? styles.muted : ''}`}
       >
+        <ViewportCapture onBounds={setViewport} />
         <MapLifecycle
           view={view}
           initialNodes={visibleNodes}
@@ -281,15 +285,21 @@ export function NetworkCanvas(props: Props) {
         )}
         {(options.routes ?? []).map((route) => {
           const path = view === 'topology' ? (paths.get(route.id) ?? []) : routePath(route, options, view, nodes);
-          if (path.length < 2) {
+          if (
+            path.length < 2 ||
+            (!editing &&
+              route.id !== selectedRoute &&
+              viewport &&
+              !viewport.intersects(L.latLngBounds(path.map((p) => latLng(p, view)))))
+          ) {
             return null;
           }
           const status = routeStatus(route, readings);
           const color =
             route.id === selectedRoute
               ? theme.colors.primary.text
-              : status === 'unknown'
-                ? theme.colors.text.secondary
+              : status === 'unknown' || status === 'maintenance'
+                ? statusColor(status, theme)
                 : (route.colors?.[status] ?? statusColor(status, theme));
           const click = (e: L.LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(e.originalEvent);
@@ -373,84 +383,92 @@ export function NetworkCanvas(props: Props) {
             interactive={false}
           />
         )}
-        {visibleNodes.map((node) => {
-          const markerWidth = parseFloat(theme.spacing(node.equipment ? 24 : 30));
-          const markerHeight = parseFloat(theme.spacing(node.equipment ? 14 : 16));
-          const status = node.equipment ? equipmentStatus(node.equipment, readings) : popStatus(node.pop, readings);
-          const type = node.equipment?.type?.toLowerCase() ?? '';
-          const fallback = type.includes('olt')
-            ? 'pop-olt.svg'
-            : type.includes('switch')
-              ? 'sw.png'
-              : node.equipment
-                ? 'pop-router.svg'
-                : 'pop-datacenter.svg';
-          const supplied = node.equipment ? '' : node.pop.iconUrl;
-          const imageUrl =
-            supplied && /^(https?:\/\/|\/|public\/)/i.test(supplied)
-              ? supplied
-              : `public/plugins/jakson-jmap-panel/img/${fallback}`;
-          const showName = view === 'topology' || node.pop.showName !== false;
-          const group = groups.get(node.pop.id);
-          const internal = group?.localRoutes.length ?? 0;
-          const failures = group?.localRoutes.filter((r) => routeStatus(r, readings) === 'down').length ?? 0;
-          const summary = node.equipment
-            ? `${node.equipment.type || 'Equipamento'} · ${node.pop.name}`
-            : `${node.pop.equipments.length} equipamentos${internal ? ` · ${internal} links internos` : ''}`;
-          const icon = L.divIcon({
-            className: `jmap-node ${styles.node} ${selectedNode === node.id || connection?.id === node.id ? styles.selected : ''}`,
-            iconSize: [markerWidth * markerScale, markerHeight * markerScale],
-            iconAnchor: [(markerWidth * markerScale) / 2, (markerHeight * markerScale) / 2],
-            html: `<div class="${styles.nodeCard} ${!node.equipment ? styles.popCard : ''}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left;border-top-color:${statusColor(status, theme)}"><div class="${styles.identity}"><img src="${escape(imageUrl)}" alt="" draggable="false" /><div><small>${node.equipment ? 'EQUIPAMENTO' : 'PONTO DE PRESENÇA'}</small><strong>${showName ? escape(node.name || 'Sem nome') : ''}</strong></div></div><span class="${styles.nodeStatus}" style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}</span><span>${escape(summary)}</span>${!node.equipment ? `<small class="${styles.hint}" style="color:${failures ? theme.colors.error.text : theme.colors.text.secondary}">${failures ? `${failures} link(s) interno(s) em falha` : expanded.has(node.pop.id) ? 'Equipamentos expandidos' : 'Selecione para expandir'}</small>` : ''}</div>`,
-          });
-          return (
-            <Marker
-              key={node.id}
-              position={latLng(node.position, view)}
-              icon={icon}
-              title={`${node.name} · ${statusLabel[status]}`}
-              alt={node.name}
-              keyboard
-              draggable={editing && tool === 'move'}
-              eventHandlers={{
-                click: () => {
-                  if (suppressClick.current) {
-                    suppressClick.current = false;
-                    return;
-                  }
-                  onSelectNode(node.id);
-                  if (editing && tool === 'connect') {
-                    if (!connectionRef.current) {
+        {visibleNodes
+          .filter(
+            (node) => editing || node.id === selectedNode || !viewport || viewport.contains(latLng(node.position, view))
+          )
+          .map((node) => {
+            const markerWidth = parseFloat(theme.spacing(node.equipment ? 24 : 30));
+            const markerHeight = parseFloat(theme.spacing(node.equipment ? 14 : 16));
+            const status = node.equipment ? equipmentStatus(node.equipment, readings) : popStatus(node.pop, readings);
+            const type = node.equipment?.type?.toLowerCase() ?? '';
+            const fallback = type.includes('olt')
+              ? 'pop-olt.svg'
+              : type.includes('switch')
+                ? 'sw.png'
+                : node.equipment
+                  ? 'pop-router.svg'
+                  : 'pop-datacenter.svg';
+            const supplied = node.equipment ? '' : node.pop.iconUrl;
+            const imageUrl =
+              supplied && /^(https?:\/\/|\/|public\/)/i.test(supplied)
+                ? supplied
+                : `public/plugins/jakson-jmap-panel/img/${fallback}`;
+            const showName = view === 'topology' || node.pop.showName !== false;
+            const group = groups.get(node.pop.id);
+            const internal = group?.localRoutes.length ?? 0;
+            const failures = group?.localRoutes.filter((r) => routeStatus(r, readings) === 'down').length ?? 0;
+            const summary = node.equipment
+              ? `${node.equipment.type || 'Equipamento'} · ${node.pop.name}`
+              : `${node.pop.equipments.length} equipamentos${internal ? ` · ${internal} links internos` : ''}`;
+            const icon = L.divIcon({
+              className: `jmap-node ${styles.node} ${selectedNode === node.id || connection?.id === node.id ? styles.selected : ''}`,
+              iconSize: [markerWidth * markerScale, markerHeight * markerScale],
+              iconAnchor: [(markerWidth * markerScale) / 2, (markerHeight * markerScale) / 2],
+              html: `<div class="${styles.nodeCard} ${!node.equipment ? styles.popCard : ''}" style="width:${markerWidth}px;height:${markerHeight}px;transform:scale(${markerScale});transform-origin:top left;border-top-color:${statusColor(status, theme)}"><div class="${styles.identity}"><img src="${escape(migratePresetIcon(imageUrl))}" alt="" draggable="false" /><div><small>${node.equipment ? 'EQUIPAMENTO' : 'PONTO DE PRESENÇA'}</small><strong>${showName ? escape(node.name || 'Sem nome') : ''}</strong></div></div><span class="${styles.nodeStatus}" style="color:${statusColor(status, theme)}">${escape(statusLabel[status])}</span><span>${escape(summary)}</span>${!node.equipment ? `<small class="${styles.hint}" style="color:${failures ? theme.colors.error.text : theme.colors.text.secondary}">${failures ? `${failures} link(s) interno(s) em falha` : expanded.has(node.pop.id) ? 'Equipamentos expandidos' : 'Selecione para expandir'}</small>` : ''}</div>`,
+            });
+            return (
+              <Marker
+                key={node.id}
+                position={latLng(node.position, view)}
+                icon={icon}
+                title={`${node.name} · ${statusLabel[status]}`}
+                alt={node.name}
+                keyboard
+                draggable={
+                  editing &&
+                  tool === 'move' &&
+                  !(node.equipment ? node.equipment.topologyLocked : node.pop.topologyLocked)
+                }
+                eventHandlers={{
+                  click: () => {
+                    if (suppressClick.current) {
+                      suppressClick.current = false;
+                      return;
+                    }
+                    onSelectNode(node.id);
+                    if (editing && tool === 'connect') {
+                      if (!connectionRef.current) {
+                        connectionRef.current = node;
+                        setConnection(node);
+                      } else {
+                        finishConnection(node);
+                      }
+                    }
+                  },
+                  mousedown: () => {
+                    if (editing && tool === 'connect' && !connectionRef.current) {
                       connectionRef.current = node;
                       setConnection(node);
-                    } else {
+                    }
+                  },
+                  mouseup: () => {
+                    if (editing && tool === 'connect') {
                       finishConnection(node);
                     }
-                  }
-                },
-                mousedown: () => {
-                  if (editing && tool === 'connect' && !connectionRef.current) {
-                    connectionRef.current = node;
-                    setConnection(node);
-                  }
-                },
-                mouseup: () => {
-                  if (editing && tool === 'connect') {
-                    finishConnection(node);
-                  }
-                },
-                dragend: (e) => {
-                  onMove(node, point(e.target.getLatLng(), view));
-                },
-                dblclick: () => {
-                  if (view === 'topology' && !node.equipment && !editing) {
-                    onTogglePop(node.pop.id);
-                  }
-                },
-              }}
-            />
-          );
-        })}
+                  },
+                  dragend: (e) => {
+                    onMove(node, point(e.target.getLatLng(), view));
+                  },
+                  dblclick: () => {
+                    if (view === 'topology' && !node.equipment && !editing) {
+                      onTogglePop(node.pop.id);
+                    }
+                  },
+                }}
+              />
+            );
+          })}
       </MapContainer>
     </div>
   );

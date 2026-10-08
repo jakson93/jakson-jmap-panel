@@ -3,9 +3,34 @@ import { SimplePanel } from './components/SimplePanel';
 import { CaptureButtonEditor } from './components/CaptureButtonEditor';
 import { PopsEditor } from './components/PopsEditor';
 import { RoutesEditor } from './components/RoutesEditor';
+import { SavedViewsEditor } from './components/SavedViewsEditor';
 import { PanelOptions } from './types';
 
 export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions((builder) => {
+  builder.addNumberInput({
+    path: 'staleAfterSeconds',
+    name: 'Idade máxima da amostra (segundos)',
+    description: 'Após este intervalo o status passa a Sem dados. Também limita lacunas no histórico observado.',
+    category: ['Operação da rede'],
+    defaultValue: 300,
+    settings: { min: 10, max: 2592000, step: 10 },
+  });
+  builder.addNumberInput({
+    path: 'topologyGridSize',
+    name: 'Grade do editor',
+    description: 'Alinha as posições e desvios na topologia. Zero permite movimentação livre.',
+    category: ['Visualização'],
+    defaultValue: 20,
+    settings: { min: 0, max: 100, step: 5 },
+  });
+  builder.addCustomEditor({
+    id: 'savedViews',
+    path: 'savedViews',
+    name: 'Visões salvas',
+    category: ['Operação da rede'],
+    defaultValue: [],
+    editor: SavedViewsEditor,
+  });
   builder.addRadio({
     path: 'viewMode',
     name: 'Exibição inicial',

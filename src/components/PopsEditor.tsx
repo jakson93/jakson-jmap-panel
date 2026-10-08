@@ -1,12 +1,13 @@
 import React from 'react';
+import { migratePresetIcon } from '../iconUrl';
 import { DataFrame, FieldType, SelectableValue, StandardEditorProps } from '@grafana/data';
 import { Button, Field, InlineSwitch, Input, Modal, Select, Stack } from '@grafana/ui';
 
 import { Pop, PopEquipment, PopMetric } from '../types';
-import datacenterIcon from '../img/datacenter.png';
-import oltIcon from '../img/olt.png';
-import swIcon from '../img/sw.png';
-import torreIcon from '../img/torre.png';
+const datacenterIcon = '/public/plugins/jakson-jmap-panel/img/datacenter.png';
+const oltIcon = '/public/plugins/jakson-jmap-panel/img/olt.png';
+const swIcon = '/public/plugins/jakson-jmap-panel/img/sw.png';
+const torreIcon = '/public/plugins/jakson-jmap-panel/img/torre.png';
 import { PopSelectMap } from './PopSelectMap';
 
 const POP_ICON_PRESETS = [
@@ -132,7 +133,7 @@ const getSelectValue = (
 };
 
 const normalizePopIconUrl = (value?: string) => {
-  const raw = value?.trim() ?? '';
+  const raw = migratePresetIcon(value?.trim() ?? '');
   if (!raw) {
     return '';
   }

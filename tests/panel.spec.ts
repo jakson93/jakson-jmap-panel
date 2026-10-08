@@ -1,5 +1,43 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
+test('combined operational filters never remove routes from the editor', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Analisar rede', exact: true }).click();
+  await panel.getByRole('button', { name: 'Filtros e visões', exact: true }).click();
+  const operation = panel.getByLabel('Operação da rede', { exact: true });
+  await operation.getByLabel('Status', { exact: true }).selectOption('down');
+  await operation.getByLabel('Tipo de ligação', { exact: true }).selectOption('backbone');
+  await panel.getByRole('button', { name: 'Analisar rede', exact: true }).click();
+  await expect(operation.getByText(/1\/6 rotas/)).toBeVisible();
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: 'Editar layout', exact: true }).click();
+  await panel.getByRole('button', { name: 'Conectar', exact: true }).click();
+  await expect(panel.getByLabel('Rota para conectar').locator('option')).toHaveCount(7);
+  await panel.getByRole('button', { name: 'Cancelar', exact: true }).click();
+});
+
+test('operational history exposes data coverage and registered dependencies', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: 'Analisar rede', exact: true }).click();
+  const operation = panel.getByLabel('Operação da rede', { exact: true });
+  await expect(operation.getByText('1 rota(s) com dependência cadastrada', { exact: true })).toBeVisible();
+  await operation.getByRole('button', { name: 'Histórico', exact: true }).click();
+  await operation.getByLabel('Rota', { exact: true }).selectOption('rota-1');
+  await expect(operation.getByText('Disponibilidade observada', { exact: true })).toBeVisible();
+  await expect(operation.getByText('Cobertura de dados', { exact: true })).toBeVisible();
+  await expect(operation.getByText('Tempo médio de recuperação', { exact: true })).toBeVisible();
+});
+
 test('preserves the original map and switches to equipment topology', async ({
   gotoPanelEditPage,
   readProvisionedDashboard,

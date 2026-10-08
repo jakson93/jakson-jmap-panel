@@ -3,8 +3,10 @@ import L from 'leaflet';
 import { css, cx } from '@emotion/css';
 import { GrafanaTheme2, LoadingState, PanelProps } from '@grafana/data';
 import { Button, Icon, useStyles2, useTheme2 } from '@grafana/ui';
-import { PanelOptions, NetworkView } from '../types';
+import { PanelOptions, NetworkView, NetworkFilter, Route } from '../types';
 import {
+  alignEquipment,
+  snapPoint,
   connectNodes,
   moveNode,
   networkNodes,
@@ -14,13 +16,28 @@ import {
   updateRoutePath,
 } from '../networkModel';
 import { topologyNodes, topologyPaths } from '../networkPresentation';
-import { equipmentStatus, popStatus, readTelemetry, routeStatus, statusColor, statusLabel } from '../networkTelemetry';
+import { equipmentStatus, popStatus, routeStatus, statusColor, statusLabel } from '../networkTelemetry';
 import { NetworkCanvas, EditTool } from './NetworkCanvas';
 import { MapView } from './MapView';
+import { OperationalConsole } from './OperationalConsole';
+import { useOperationalReadings } from './useOperationalReadings';
+import {
+  dependencyError,
+  connectionError,
+  emptyFilter,
+  filterNetwork,
+  endpointLabel,
+  routeKinds,
+} from '../operationalModel';
 
 export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZone, width }: PanelProps<PanelOptions>) {
   const theme = useTheme2();
   const styles = useStyles2(getStyles);
+  const [filter, setFilter] = React.useState<NetworkFilter>(emptyFilter);
+  const [snap, setSnap] = React.useState(true);
+  const [fromPort, setFromPort] = React.useState('');
+  const [toPort, setToPort] = React.useState('');
+  const [portName, setPortName] = React.useState('');
   const [view, setView] = React.useState<NetworkView>(options.viewMode ?? 'map');
   const [draft, setDraft] = React.useState<PanelOptions>();
   const [history, setHistory] = React.useState<PanelOptions[]>([]);
@@ -53,13 +70,19 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     () => topologyPaths(current, nodes, expanded, editing),
     [current, nodes, expanded, editing]
   );
-  const readings = React.useMemo(
-    () => readTelemetry(data.series ?? [], theme, timeZone),
-    [data.series, theme, timeZone]
+  const { readings, referenceTime } = useOperationalReadings(data, timeRange, current.staleAfterSeconds, timeZone);
+  const filtered = React.useMemo(
+    () => (editing ? current : filterNetwork(current, filter, readings)),
+    [current, filter, readings, editing]
   );
+  const displayedNodes = React.useMemo(
+    () => nodes.filter((n) => filtered.pops.some((p) => p.id === n.pop.id)),
+    [nodes, filtered.pops]
+  );
+  const grid = view === 'topology' && snap ? (current.topologyGridSize ?? 20) : 0;
   const routes = current.routes ?? [];
   const routeCounts = React.useMemo(() => {
-    const counts = { online: 0, alert: 0, down: 0, unknown: 0 };
+    const counts = { online: 0, alert: 0, down: 0, unknown: 0, maintenance: 0 };
     for (const route of current.routes ?? []) {
       counts[routeStatus(route, readings)]++;
     }
@@ -137,6 +160,10 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     setHistory([]);
     setFuture([]);
     setTool('move');
+    setSelection(undefined);
+    setBindRoute('');
+    setFromPort('');
+    setToPort('');
     setMessage('Edição cancelada.');
   };
   const apply = () => {
@@ -164,16 +191,23 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       setFuture((next) => next.slice(1));
     }
   };
-  const connect = (sourceId: string, targetId: string) => {
+  const connect = (sourceId: string, targetId: string, usePorts = false) => {
     const source = nodes.find((n) => n.id === sourceId);
     const target = nodes.find((n) => n.id === targetId);
     if (!draft || !source || !target || sourceId === targetId) {
       return;
     }
+    const from = { ...source.endpoint, ...(usePorts && fromPort ? { portId: fromPort } : {}) };
+    const to = { ...target.endpoint, ...(usePorts && toPort ? { portId: toPort } : {}) };
+    const error = connectionError(draft, from, bindRoute) || connectionError(draft, to, bindRoute);
+    if (error) {
+      setMessage(error);
+      return;
+    }
     const next = connectNodes(
       draft,
-      source.endpoint,
-      target.endpoint,
+      from,
+      to,
       { online: theme.colors.success.text, alert: theme.colors.warning.text, down: theme.colors.error.text },
       bindRoute || undefined
     );
@@ -186,6 +220,21 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       bindRoute ? 'Extremidades da rota vinculadas.' : 'Conexão criada. Configure as métricas em Cadastro de Rotas.'
     );
     setBindRoute('');
+    setFromPort('');
+    setToPort('');
+  };
+  const updateRoute = (patch: Partial<Route>) => {
+    if (!selectedRoute) {
+      return;
+    }
+    if (patch.dependsOnRouteIds) {
+      const error = dependencyError(current, selectedRoute.id, patch.dependsOnRouteIds);
+      if (error) {
+        setMessage(error);
+        return;
+      }
+    }
+    change({ ...current, routes: routes.map((r) => (r.id === selectedRoute.id ? { ...r, ...patch } : r)) });
   };
   const fit = () => {
     if (!map.current || !nodes.length) {
@@ -220,9 +269,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
       return '';
     }
     const endpoint = routeEndpoint(selectedRoute, side, current.pops);
-    const pop = current.pops.find((p) => p.id === endpoint?.popId);
-    const equipment = pop?.equipments.find((e) => e.id === endpoint?.equipmentId);
-    return pop ? `${pop.name}${equipment ? ` / ${equipment.name}` : ''}` : 'Não vinculada';
+    return endpointLabel(endpoint, current);
   };
   const compact = width < 760;
   if (view === 'map' && !editing) {
@@ -234,6 +281,14 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           data={data}
           timeRange={timeRange}
           timeZone={timeZone}
+          filter={filter}
+          onFilter={setFilter}
+          onRestore={(saved) => {
+            setFilter(saved.filter);
+            setView(saved.view);
+            setExpandedPops(new Set(saved.expandedPops));
+            setSelection(undefined);
+          }}
           tools={
             <div className={styles.mapControls} role="group" aria-label="Modo de exibição">
               <Button variant="primary" aria-pressed>
@@ -324,9 +379,9 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
         <main className={styles.stage} aria-label={view === 'map' ? 'Mapa da rede' : 'Topologia da rede'}>
           <NetworkCanvas
             key={view}
-            options={current}
+            options={filtered}
             view={view}
-            nodes={nodes}
+            nodes={displayedNodes}
             readings={readings}
             editing={editing}
             tool={tool}
@@ -334,8 +389,17 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             selectedRoute={selectedRoute?.id}
             onSelectNode={(id) => setSelection({ kind: 'node', id })}
             onSelectRoute={(id) => setSelection({ kind: 'route', id })}
-            onMove={(node, p) => change(moveNode(current, node.endpoint, p, view))}
-            onPath={(id, points) => change(updateRoutePath(current, id, points, view))}
+            onMove={(node, p) => change(moveNode(current, node.endpoint, snapPoint(p, grid), view))}
+            onPath={(id, points) =>
+              change(
+                updateRoutePath(
+                  current,
+                  id,
+                  points.map((p, i) => (i > 0 && i < points.length - 1 ? snapPoint(p, grid) : p)),
+                  view
+                )
+              )
+            }
             onConnect={(source, target) => connect(source.id, target.id)}
             onReady={(ready) => {
               map.current = ready;
@@ -343,6 +407,39 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             expanded={expanded}
             onTogglePop={togglePop}
           />
+          {!editing && !selection && (
+            <OperationalConsole
+              options={current}
+              queryError={data.state === LoadingState.Error}
+              readings={readings}
+              referenceTime={referenceTime}
+              timeRange={timeRange}
+              filter={filter}
+              onFilter={setFilter}
+              view={view}
+              expandedPops={[...expandedPops]}
+              onRestore={(saved) => {
+                setFilter(saved.filter);
+                setView(saved.view);
+                setExpandedPops(new Set(saved.expandedPops));
+              }}
+              onOptionsChange={onOptionsChange}
+              onLocate={(id) => {
+                selectRoute(id);
+                const path = routePath(routes.find((r) => r.id === id)!, current, view, nodes);
+                if (path.length) {
+                  map.current?.fitBounds(L.latLngBounds(path.map((p) => [-p.y, p.x] as L.LatLngTuple)), {
+                    padding: [180, 200],
+                    maxZoom: 0,
+                  });
+                }
+              }}
+              onDetails={(id) => {
+                selectRoute(id);
+                setFullDetails(true);
+              }}
+            />
+          )}
           {view === 'topology' && !editing && (
             <div className={styles.overview} aria-label="Resumo da rede">
               <div>
@@ -411,6 +508,11 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                   disabled={!future.length}
                   onClick={redo}
                 />
+                {view === 'topology' && (
+                  <Button variant={snap ? 'primary' : 'secondary'} aria-pressed={snap} onClick={() => setSnap(!snap)}>
+                    Grade {current.topologyGridSize ?? 20}
+                  </Button>
+                )}
                 {view === 'topology' && (
                   <Button
                     variant="secondary"
@@ -541,7 +643,10 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 <select
                   aria-label="Origem da conexão"
                   value={fromId}
-                  onChange={(e) => setFromId(e.currentTarget.value)}
+                  onChange={(e) => {
+                    setFromId(e.currentTarget.value);
+                    setFromPort('');
+                  }}
                 >
                   <option value="">Selecione</option>
                   {nodes.map((n) => (
@@ -553,7 +658,14 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
               </label>
               <label>
                 Destino
-                <select aria-label="Destino da conexão" value={toId} onChange={(e) => setToId(e.currentTarget.value)}>
+                <select
+                  aria-label="Destino da conexão"
+                  value={toId}
+                  onChange={(e) => {
+                    setToId(e.currentTarget.value);
+                    setToPort('');
+                  }}
+                >
                   <option value="">Selecione</option>
                   {nodes.map((n) => (
                     <option key={n.id} value={n.id}>
@@ -562,9 +674,30 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                   ))}
                 </select>
               </label>
+              {[
+                { id: fromId, port: fromPort, set: setFromPort, label: 'Porta de origem' },
+                { id: toId, port: toPort, set: setToPort, label: 'Porta de destino' },
+              ].map((side) => {
+                const equipment = nodes.find((n) => n.id === side.id)?.equipment;
+                return (
+                  Boolean(equipment?.ports?.length) && (
+                    <label key={side.label}>
+                      {side.label}
+                      <select value={side.port} onChange={(e) => side.set(e.currentTarget.value)}>
+                        <option value="">Sem porta específica</option>
+                        {equipment?.ports?.map((port) => (
+                          <option key={port.id} value={port.id}>
+                            {port.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )
+                );
+              })}
               <Button
                 disabled={!nodes.some((n) => n.id === fromId) || !nodes.some((n) => n.id === toId) || fromId === toId}
-                onClick={() => connect(fromId, toId)}
+                onClick={() => connect(fromId, toId, true)}
               >
                 Conectar itens
               </Button>
@@ -702,6 +835,214 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 </div>
               </>
             )}
+            {editing && selectedNode && (
+              <div className={styles.endpointInfo}>
+                {view === 'topology' && (
+                  <>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(
+                          selectedNode.equipment
+                            ? selectedNode.equipment.topologyLocked
+                            : selectedNode.pop.topologyLocked
+                        )}
+                        onChange={(e) => {
+                          const locked = e.currentTarget.checked;
+                          change({
+                            ...current,
+                            pops: current.pops.map((p) =>
+                              p.id !== selectedNode.pop.id
+                                ? p
+                                : selectedNode.equipment
+                                  ? {
+                                      ...p,
+                                      equipments: p.equipments.map((item) =>
+                                        item.id === selectedNode.equipment!.id
+                                          ? { ...item, topologyLocked: locked }
+                                          : item
+                                      ),
+                                    }
+                                  : { ...p, topologyLocked: locked }
+                            ),
+                          });
+                        }}
+                      />
+                      Bloquear posição
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => change(alignEquipment(current, selectedNode.pop.id, 'horizontal'))}
+                    >
+                      Alinhar equipamentos na horizontal
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => change(alignEquipment(current, selectedNode.pop.id, 'vertical'))}
+                    >
+                      Alinhar equipamentos na vertical
+                    </Button>
+                  </>
+                )}
+                {!selectedNode.equipment && (
+                  <label>
+                    Região
+                    <input
+                      value={selectedNode.pop.region ?? ''}
+                      onChange={(e) => {
+                        const region = e.currentTarget.value;
+                        change({
+                          ...current,
+                          pops: current.pops.map((p) => (p.id === selectedNode.pop.id ? { ...p, region } : p)),
+                        });
+                      }}
+                    />
+                  </label>
+                )}
+                {selectedNode.equipment && (
+                  <>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selectedNode.equipment.maintenance)}
+                        onChange={(e) => {
+                          const maintenance = e.currentTarget.checked;
+                          change({
+                            ...current,
+                            pops: current.pops.map((p) =>
+                              p.id !== selectedNode.pop.id
+                                ? p
+                                : {
+                                    ...p,
+                                    equipments: p.equipments.map((item) =>
+                                      item.id === selectedNode.equipment!.id ? { ...item, maintenance } : item
+                                    ),
+                                  }
+                            ),
+                          });
+                        }}
+                      />
+                      Equipamento em manutenção
+                    </label>
+                    <strong>Portas cadastradas</strong>
+                    {(selectedNode.equipment.ports ?? []).map((port) => (
+                      <small key={port.id}>{port.name}</small>
+                    ))}
+                    <label>
+                      Nome da porta
+                      <input value={portName} onChange={(e) => setPortName(e.currentTarget.value)} />
+                    </label>
+                    <Button
+                      size="sm"
+                      disabled={
+                        !portName.trim() || selectedNode.equipment.ports?.some((p) => p.name === portName.trim())
+                      }
+                      onClick={() => {
+                        const port = { id: crypto.randomUUID(), name: portName.trim() };
+                        change({
+                          ...current,
+                          pops: current.pops.map((p) =>
+                            p.id !== selectedNode.pop.id
+                              ? p
+                              : {
+                                  ...p,
+                                  equipments: p.equipments.map((item) =>
+                                    item.id === selectedNode.equipment!.id
+                                      ? { ...item, ports: [...(item.ports ?? []), port] }
+                                      : item
+                                  ),
+                                }
+                          ),
+                        });
+                        setPortName('');
+                      }}
+                    >
+                      Adicionar porta
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            {editing && selectedRoute && (
+              <div className={styles.endpointInfo}>
+                <label>
+                  Tipo de ligação
+                  <select
+                    value={selectedRoute.kind ?? 'transport'}
+                    onChange={(e) => updateRoute({ kind: e.currentTarget.value as Route['kind'] })}
+                  >
+                    {Object.entries(routeKinds).map(([id, label]) => (
+                      <option key={id} value={id}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedRoute.maintenance)}
+                    onChange={(e) => updateRoute({ maintenance: e.currentTarget.checked })}
+                  />
+                  Rota em manutenção
+                </label>
+                <strong>Depende das rotas</strong>
+                <small>Cadastre apenas dependências reais. Ciclos não são permitidos.</small>
+                {routes
+                  .filter((r) => r.id !== selectedRoute.id)
+                  .map((r) => (
+                    <label key={r.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRoute.dependsOnRouteIds?.includes(r.id) ?? false}
+                        onChange={(e) =>
+                          updateRoute({
+                            dependsOnRouteIds: e.currentTarget.checked
+                              ? [...(selectedRoute.dependsOnRouteIds ?? []), r.id]
+                              : (selectedRoute.dependsOnRouteIds?.filter((id) => id !== r.id) ?? []),
+                          })
+                        }
+                      />
+                      {r.name}
+                    </label>
+                  ))}
+                {(['source', 'target'] as const).map((side) => {
+                  const endpoint = routeEndpoint(selectedRoute, side, current.pops);
+                  const equipment = current.pops
+                    .find((p) => p.id === endpoint?.popId)
+                    ?.equipments.find((e) => e.id === endpoint?.equipmentId);
+                  return (
+                    equipment &&
+                    endpoint && (
+                      <label key={side}>
+                        Porta {side === 'source' ? 'de origem' : 'de destino'}
+                        <select
+                          value={endpoint.portId ?? ''}
+                          onChange={(e) => {
+                            const next = { ...endpoint, portId: e.currentTarget.value || undefined };
+                            const error = connectionError(current, next, selectedRoute.id);
+                            if (error) {
+                              setMessage(error);
+                            } else {
+                              updateRoute({ [side]: next });
+                            }
+                          }}
+                        >
+                          <option value="">Sem porta específica</option>
+                          {equipment.ports?.map((port) => (
+                            <option key={port.id} value={port.id}>
+                              {port.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )
+                  );
+                })}
+              </div>
+            )}
             {editing && selectedRoute && (
               <div className={styles.actions}>
                 <label>
@@ -735,7 +1076,15 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 <Button
                   variant="destructive"
                   onClick={() => {
-                    change({ ...current, routes: routes.filter((r) => r.id !== selectedRoute.id) });
+                    change({
+                      ...current,
+                      routes: routes
+                        .filter((r) => r.id !== selectedRoute.id)
+                        .map((r) => ({
+                          ...r,
+                          dependsOnRouteIds: r.dependsOnRouteIds?.filter((id) => id !== selectedRoute.id),
+                        })),
+                    });
                     setSelection(undefined);
                   }}
                 >
@@ -765,7 +1114,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           </span>
           {unbound > 0 && <span>{unbound} rota(s) sem extremidades vinculadas. Use Conectar → Vincular.</span>}
           <div className={styles.legend}>
-            {(['online', 'alert', 'down', 'unknown'] as const).map((s) => (
+            {(['online', 'alert', 'down', 'unknown', 'maintenance'] as const).map((s) => (
               <span key={s} style={{ color: statusColor(s, theme) }}>
                 {statusLabel[s]}
               </span>
@@ -809,7 +1158,7 @@ function getStyles(t: GrafanaTheme2) {
       color: t.colors.text.primary,
       fontFamily: t.typography.fontFamily,
       fontSize: t.typography.body.fontSize,
-      'input, select': {
+      'input:not([type=checkbox]), select': {
         background: t.colors.background.primary,
         color: t.colors.text.primary,
         border,
@@ -827,6 +1176,15 @@ function getStyles(t: GrafanaTheme2) {
         flexDirection: 'column',
         gap: t.spacing(0.5),
         fontSize: t.typography.bodySmall.fontSize,
+      },
+      'label:has(> input[type=checkbox])': { flexDirection: 'row', alignItems: 'center', gap: t.spacing(1) },
+      'input[type=checkbox]': {
+        width: t.spacing(2),
+        height: t.spacing(2),
+        minHeight: 0,
+        margin: 0,
+        padding: 0,
+        flexShrink: 0,
       },
       'button:focus-visible, input:focus-visible, select:focus-visible': {
         outline: `2px solid ${t.colors.primary.text}`,

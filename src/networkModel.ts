@@ -83,6 +83,10 @@ export function moveNode(
   if (!validPoint(point)) {
     return options;
   }
+  const selected = networkNodes(options, view).find((node) => sameEndpoint(node.endpoint, endpoint));
+  if (view === 'topology' && (selected?.equipment ? selected.equipment.topologyLocked : selected?.pop.topologyLocked)) {
+    return options;
+  }
   const pops = (options.pops ?? []).map((pop) => {
     if (pop.id !== endpoint.popId) {
       return pop;
@@ -98,7 +102,7 @@ export function moveNode(
         ...pop,
         topologyPosition: point,
         equipments: pop.equipments.map((equipment) =>
-          previous && validPoint(equipment.topologyPosition)
+          previous && !equipment.topologyLocked && validPoint(equipment.topologyPosition)
             ? {
                 ...equipment,
                 topologyPosition: {
@@ -250,17 +254,45 @@ export function organizeTopology(options: PanelOptions, columnGap: number, rowGa
       const centerX = columnGap + column * columnGap * 2.5;
       pops.push({
         ...pop,
-        topologyPosition: { x: centerX, y: rowY },
+        topologyPosition: pop.topologyLocked ? pop.topologyPosition : { x: centerX, y: rowY },
         equipments: pop.equipments.map((equipment, i) => ({
           ...equipment,
-          topologyPosition: {
-            x: centerX + (i % 2 ? 0.5 : -0.5) * columnGap,
-            y: rowY + rowGap * (1 + Math.floor(i / 2)),
-          },
+          topologyPosition:
+            equipment.topologyLocked || pop.topologyLocked
+              ? equipment.topologyPosition
+              : {
+                  x: centerX + (i % 2 ? 0.5 : -0.5) * columnGap,
+                  y: rowY + rowGap * (1 + Math.floor(i / 2)),
+                },
         })),
       });
     });
     rowY += Math.max(...heights.slice(row, row + columns));
   }
   return { ...options, pops };
+}
+
+export function snapPoint(point: CanvasPoint, size: number): CanvasPoint {
+  return size > 0 ? { x: Math.round(point.x / size) * size, y: Math.round(point.y / size) * size } : point;
+}
+
+export function alignEquipment(options: PanelOptions, popId: string, axis: 'horizontal' | 'vertical'): PanelOptions {
+  const nodes = networkNodes(options, 'topology').filter((n) => n.pop.id === popId && n.equipment);
+  if (!nodes.length) {
+    return options;
+  }
+  let next = options;
+  const locked = nodes.find((n) => n.equipment?.topologyLocked);
+  const anchor = locked ?? nodes[0];
+  nodes.forEach((node, index) => {
+    next = moveNode(
+      next,
+      node.endpoint,
+      axis === 'horizontal'
+        ? { x: anchor.position.x + (index - nodes.indexOf(anchor)) * 240, y: anchor.position.y }
+        : { x: anchor.position.x, y: anchor.position.y + (index - nodes.indexOf(anchor)) * 130 },
+      'topology'
+    );
+  });
+  return next;
 }

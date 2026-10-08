@@ -88,11 +88,29 @@ export type Route = {
   source?: NetworkEndpoint;
   target?: NetworkEndpoint;
   topologyPoints?: CanvasPoint[];
+  kind?: 'transport' | 'access' | 'backbone' | 'lan';
+  dependsOnRouteIds?: string[];
+  maintenance?: boolean;
 };
 
 export type CanvasPoint = { x: number; y: number };
-export type NetworkEndpoint = { popId: string; equipmentId?: string };
+export type NetworkEndpoint = { popId: string; equipmentId?: string; portId?: string };
 export type NetworkView = 'map' | 'topology';
+export type NetworkFilter = {
+  query: string;
+  status: string;
+  popIds: string[];
+  kind: string;
+  includeDependencies: boolean;
+};
+export type SavedNetworkView = {
+  id: string;
+  name: string;
+  view: NetworkView;
+  filter: NetworkFilter;
+  expandedPops: string[];
+};
+export type EquipmentPort = { id: string; name: string; description?: string };
 
 export type PopMetric = {
   id: string;
@@ -121,6 +139,9 @@ export type PopEquipment = {
   observationShow?: boolean;
   metrics: PopMetric[];
   topologyPosition?: CanvasPoint;
+  topologyLocked?: boolean;
+  maintenance?: boolean;
+  ports?: EquipmentPort[];
 };
 
 export type Pop = {
@@ -137,9 +158,14 @@ export type Pop = {
   coverageOpacity?: number;
   equipments: PopEquipment[];
   topologyPosition?: CanvasPoint;
+  topologyLocked?: boolean;
+  region?: string;
 };
 
 export interface PanelOptions {
+  staleAfterSeconds?: number;
+  topologyGridSize?: number;
+  savedViews?: SavedNetworkView[];
   viewMode?: NetworkView;
   mapLabelMode?: 'smart' | 'name' | 'details' | 'hover';
   mapTone?: 'muted' | 'original';

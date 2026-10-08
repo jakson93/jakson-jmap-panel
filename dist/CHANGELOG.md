@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 (Homologação — 2026-10-08)
+
+- Remodela o card flutuante de falha e oferece lista estável de incidentes, duração observada, última coleta, extremidades e ações de localizar/detalhar.
+- Distingue manutenção, dados antigos e ausência de leitura; configura a idade máxima da amostra sem alterar os itens monitorados.
+- Exibe impacto potencial de dependências cadastradas e impede ciclos.
+- Adiciona filtros combináveis por busca/região, POP, tipo e status, inclusão de dependências e visões salvas no painel.
+- Calcula disponibilidade ponderada pelo tempo, cobertura de dados, quedas e recuperação com o histórico recebido. Lacunas e eventos parciais são identificados.
+- Acrescenta alinhamento, grade, bloqueio de posições, portas e validação de ocupação no editor com desfazer/refazer.
+- Limita elementos desenhados à área visível, com margem, e evita duplicação dos PNGs, mantendo URLs dos presets antigos.
+- Preserva o ID, métricas, trunks, históricos e configurações anteriores. Não inclui integração de notificações.
+
 ## 1.2.0 (Homologação — 2026-10-07)
 
 - Exibe métricas de rota habilitadas, métricas extras e métricas das interfaces no card completo, junto dos trunks e histórico RX.

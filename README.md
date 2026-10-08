@@ -14,7 +14,10 @@ Use a branch `codex/mapa-topologia` em homologação. O original está preservad
 
 Veja o [passo a passo para testar, instalar e reverter](docs/TESTAR-E-REVERTER.md), incluindo um Grafana separado via `compose.homolog.yaml` e um dashboard com dados demonstrativos.
 
-[Baixar o ZIP compilado 1.2.0 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.2.0-20261007/jakson-jmap-panel-1.2.0.zip).
+[Baixar o ZIP compilado 1.3.0 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.3.0-20261008/jakson-jmap-panel-1.3.0.zip).
+
+A versão 1.3 remodela o card de falha e acrescenta análise de incidentes, atualização dos dados, dependências explícitas, filtros/visões salvas, histórico observado, alinhamento, posições bloqueadas e portas. Todas as métricas anteriores continuam disponíveis. Não há integração de notificações. O dashboard demonstrativo usa um período histórico fixo e dados sintéticos.
+
 
 ![Topologia por POP](docs/images/jmap-1.2-topologia.png)
 
