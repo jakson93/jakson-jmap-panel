@@ -80,6 +80,7 @@ test('provisional positions and manual bends survive serialization without alter
 
 test('binding an existing map route in topology preserves its entire geographic path, interfaces and signals', () => {
   const current = options();
+  current.routes[0].topologyPoints = [{ x: 350, y: 410 }];
   const original = JSON.stringify(current);
   const next = connectNodes(
     current,
@@ -91,6 +92,7 @@ test('binding an existing map route in topology preserves its entire geographic 
   );
   for (const key of [
     'points',
+    'topologyPoints',
     'metrics',
     'extraMetrics',
     'trunks',
@@ -103,6 +105,6 @@ test('binding an existing map route in topology preserves its entire geographic 
   expect(next.routes).toHaveLength(1);
   const nodes = networkNodes(next, 'topology');
   expect(mapRouteLayout(next, nodes, new Set()).anchors).toHaveLength(0);
-  expect(topologyPaths(next, nodes, new Set(), false).get('legacy')).toHaveLength(25);
+  expect(topologyPaths(next, nodes, new Set(), false).get('legacy')![1]).toEqual({ x: 350, y: 410 });
   expect(JSON.stringify(current)).toBe(original);
 });

@@ -174,7 +174,7 @@ export function connectNodes(
               ...route,
               source,
               target,
-              topologyPoints: [],
+              topologyPoints: preserveGeography ? route.topologyPoints ?? [] : [],
               points: preserveGeography
                 ? route.points
                 : route.points.length > 1
