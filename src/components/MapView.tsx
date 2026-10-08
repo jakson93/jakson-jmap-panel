@@ -1657,7 +1657,7 @@ export function MapView({
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 12,
-                  overflowY: 'auto',
+                  flexShrink: 0,
                   paddingRight: 4,
                 }}
               >

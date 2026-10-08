@@ -92,6 +92,9 @@ test('route details display custom metrics alongside trunks and RX history', asy
   const panel = editor.panel.locator;
   await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
   await panel.getByRole('button', { name: 'Listar equipamentos e rotas', exact: true }).click();
+  await panel.getByRole('button', { name: 'Listar equipamentos e rotas', exact: true }).click();
+  await expect(panel.getByLabel('Inventário da rede', { exact: true })).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Listar equipamentos e rotas', exact: true }).click();
   await panel.getByRole('button', { name: 'POP Centro → POP Norte Em alerta', exact: true }).click();
   await panel.getByRole('button', { name: 'Detalhes completos', exact: true }).click();
   const details = panel.getByRole('dialog', { name: 'Detalhes da rota', exact: true });

@@ -166,6 +166,9 @@ export function mapPresentation(theme: GrafanaTheme2) {
         overflow-y: auto !important;
         max-width: 100%;
         padding: ${theme.spacing(2.5)} !important;
+        > * {
+          flex-shrink: 0;
+        }
       }
     `,
   };

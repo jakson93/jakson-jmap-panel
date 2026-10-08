@@ -468,7 +468,20 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             </div>
           )}
           {inventory && (
-            <aside className={styles.inventory} aria-label="Inventário da rede">
+            <aside
+              className={styles.inventory}
+              style={{ top: theme.spacing(editing ? 16 : 24) }}
+              aria-label="Inventário da rede"
+            >
+              <div className={styles.inventoryHeader}>
+                <strong>Inventário</strong>
+                <Button
+                  variant="secondary"
+                  icon="times"
+                  aria-label="Fechar inventário"
+                  onClick={() => setInventory(false)}
+                />
+              </div>
               <input
                 aria-label="Buscar na rede"
                 placeholder="Buscar equipamento ou rota"
@@ -737,47 +750,47 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             )}
           </section>
         )}
-      </div>
-      <footer className={styles.footer}>
-        <span role="status">
-          {message ||
-            (editing
-              ? tool === 'connect'
-                ? 'Puxe de um item até outro ou selecione origem e destino.'
-                : tool === 'route'
-                  ? 'Selecione uma rota e clique nela para inserir pontos. Arraste os pontos; duplo clique remove.'
-                  : 'Arraste os itens para posicionar.'
-              : data.state === LoadingState.Loading
-                ? 'Atualizando dados…'
-                : 'Selecione um POP ou uma rota. Expanda um POP para ver seus equipamentos.')}
-        </span>
-        {unbound > 0 && <span>{unbound} rota(s) sem extremidades vinculadas. Use Conectar → Vincular.</span>}
-        <div className={styles.legend}>
-          {(['online', 'alert', 'down', 'unknown'] as const).map((s) => (
-            <span key={s} style={{ color: statusColor(s, theme) }}>
-              {statusLabel[s]}
-            </span>
-          ))}
-        </div>
-      </footer>
-      {fullDetails && (
-        <div className={styles.fullDetails} role="dialog" aria-label="Detalhes completos da rede" aria-modal="true">
-          <Button autoFocus variant="secondary" onClick={() => setFullDetails(false)}>
-            Voltar à rede
-          </Button>
-          <div className={styles.legacy}>
-            <MapView
-              options={current}
-              onOptionsChange={onOptionsChange}
-              data={data}
-              timeRange={timeRange}
-              timeZone={timeZone}
-              initialRouteId={selectedRoute?.id}
-              initialPopId={selectedNode?.pop.id}
-            />
+        <footer className={styles.footer}>
+          <span role="status">
+            {message ||
+              (editing
+                ? tool === 'connect'
+                  ? 'Puxe de um item até outro ou selecione origem e destino.'
+                  : tool === 'route'
+                    ? 'Selecione uma rota e clique nela para inserir pontos. Arraste os pontos; duplo clique remove.'
+                    : 'Arraste os itens para posicionar.'
+                : data.state === LoadingState.Loading
+                  ? 'Atualizando dados…'
+                  : 'Selecione um POP ou uma rota. Expanda um POP para ver seus equipamentos.')}
+          </span>
+          {unbound > 0 && <span>{unbound} rota(s) sem extremidades vinculadas. Use Conectar → Vincular.</span>}
+          <div className={styles.legend}>
+            {(['online', 'alert', 'down', 'unknown'] as const).map((s) => (
+              <span key={s} style={{ color: statusColor(s, theme) }}>
+                {statusLabel[s]}
+              </span>
+            ))}
           </div>
-        </div>
-      )}
+        </footer>
+        {fullDetails && (
+          <div className={styles.fullDetails} role="dialog" aria-label="Detalhes completos da rede" aria-modal="true">
+            <Button autoFocus variant="secondary" onClick={() => setFullDetails(false)}>
+              Voltar à rede
+            </Button>
+            <div className={styles.legacy}>
+              <MapView
+                options={current}
+                onOptionsChange={onOptionsChange}
+                data={data}
+                timeRange={timeRange}
+                timeZone={timeZone}
+                initialRouteId={selectedRoute?.id}
+                initialPopId={selectedNode?.pop.id}
+              />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -864,6 +877,7 @@ function getStyles(t: GrafanaTheme2) {
       borderColor: t.colors.primary.border,
     }),
     workarea: css({
+      position: 'relative',
       flex: '1 0 auto',
       minHeight: t.spacing(48),
       height: '100%',
@@ -992,8 +1006,8 @@ function getStyles(t: GrafanaTheme2) {
     inventory: css({
       position: 'absolute',
       zIndex: 600,
-      top: t.spacing(16),
-      bottom: t.spacing(2),
+      top: t.spacing(24),
+      bottom: t.spacing(7),
       left: t.spacing(1.5),
       width: t.spacing(32),
       maxWidth: '85%',
@@ -1005,7 +1019,7 @@ function getStyles(t: GrafanaTheme2) {
       boxShadow: t.shadows.z2,
       input: { width: '100%' },
       h6: { margin: t.spacing(2, 0, 1) },
-      button: {
+      '> button': {
         width: '100%',
         display: 'flex',
         flexDirection: 'column',
@@ -1020,6 +1034,13 @@ function getStyles(t: GrafanaTheme2) {
         '&:hover': { background: t.colors.action.hover },
         small: { color: t.colors.text.secondary },
       },
+    }),
+    inventoryHeader: css({
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: t.spacing(1),
+      marginBottom: t.spacing(1),
     }),
     connectBar: css({
       position: 'absolute',
