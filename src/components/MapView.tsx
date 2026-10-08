@@ -684,7 +684,7 @@ function CaptureMapRef({ onReady }: { onReady: (map: L.Map) => void }) {
     onReady(map);
   }, [map, onReady]);
   React.useEffect(() => {
-    const resize = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    const resize = new ResizeObserver(() => map.invalidateSize({ animate: false }));
     resize.observe(map.getContainer());
     return () => resize.disconnect();
   }, [map]);
