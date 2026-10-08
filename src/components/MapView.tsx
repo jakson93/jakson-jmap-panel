@@ -1,21 +1,34 @@
 import React from 'react';
+import { SignalTrendChart } from './SignalTrendChart';
+import { buildSignalSeries, signalWindow } from '../signalHistory';
+import { ConfiguredMapView } from './ConfiguredMapView';
+import { FireControls, FireLayer } from './FireLayer';
+import { FireMonitoring } from './useFireMonitoring';
+import { RainMonitoring } from './useRainMonitoring';
+import { RainLayer, RainControls } from './RainLayer';
+import { normalizePopIconUrl } from '../iconUrl';
 import L from 'leaflet';
-import { DataFrame, Field, FieldType, PanelData, TimeRange, TimeZone, getDisplayProcessor } from '@grafana/data';
-import { useTheme2 } from '@grafana/ui';
+import { DataFrame, FieldType, LoadingState, PanelData, TimeRange, TimeZone } from '@grafana/data';
+import { useTheme2, useStyles2, Icon } from '@grafana/ui';
+import { mapPresentation } from './mapPresentation';
+import { MapLabels } from './MapLabels';
 import {
-  CircleMarker,
-  MapContainer,
-  Marker,
-  Polyline,
-  TileLayer,
-  Tooltip,
-  useMap,
-  useMapEvents,
-} from 'react-leaflet';
+  readTelemetry,
+  routeStatus,
+  popStatus,
+  equipmentStatus,
+  statusLabel as telemetryStatusLabel,
+  statusColor as telemetryStatusColor,
+} from '../networkTelemetry';
+import { ViewportCapture } from './ViewportCapture';
+import { OperationalConsole } from './OperationalConsole';
+import { useOperationalReadings } from './useOperationalReadings';
+import { emptyFilter, filterNetwork, routeHistory } from '../operationalModel';
+import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
-import { PanelOptions } from '../types';
-import { getLastMapView, setLastMapView } from '../mapState';
+import { PanelOptions, NetworkFilter, SavedNetworkView } from '../types';
+import { setLastMapView } from '../mapState';
 
 type Props = {
   options: PanelOptions;
@@ -23,6 +36,14 @@ type Props = {
   data: PanelData;
   timeRange: TimeRange;
   timeZone?: TimeZone;
+  initialRouteId?: string;
+  initialPopId?: string;
+  tools?: React.ReactNode;
+  fire?: FireMonitoring;
+  rain?: RainMonitoring;
+  filter?: NetworkFilter;
+  onFilter?: (filter: NetworkFilter) => void;
+  onRestore?: (view: SavedNetworkView) => void;
 };
 
 const DEFAULT_CENTER_LAT = -23.5505;
@@ -52,64 +73,12 @@ const distanceKm = (points: Array<{ lat: number; lng: number }>): number => {
   return total;
 };
 
-const getLastFieldValue = (field: Field) => {
-  for (let i = field.values.length - 1; i >= 0; i--) {
-    const value = field.values.get(i);
-    if (value !== null && value !== undefined) {
-      return value;
-    }
-  }
-  return undefined;
-};
-
-type ItemValue = {
-  text: string;
-  raw: unknown;
-};
-
 type SeriesWithTime = {
   values: number[];
   times: number[];
 };
 
-const buildItemValueMap = (series: DataFrame[], theme: ReturnType<typeof useTheme2>, timeZone?: TimeZone) => {
-  const values = new Map<string, ItemValue>();
-
-  const addValue = (label?: string, displayText?: string, raw?: unknown) => {
-    const key = label?.trim();
-    if (!key || !displayText || values.has(key)) {
-      return;
-    }
-    values.set(key, { text: displayText, raw });
-  };
-
-  series.forEach((frame) => {
-    if (!frame.fields?.length) {
-      return;
-    }
-    const valueField =
-      frame.fields.find((field) => field.type === FieldType.number) ??
-      frame.fields.find((field) => field.type !== FieldType.time);
-    if (!valueField) {
-      return;
-    }
-
-    const lastValue = getLastFieldValue(valueField);
-    if (lastValue === undefined) {
-      return;
-    }
-
-    const display = getDisplayProcessor({ field: valueField, theme, timeZone })(lastValue);
-    const displayText = display.text ?? String(lastValue);
-
-    addValue(frame.name, displayText, lastValue);
-    addValue(valueField.name, displayText, lastValue);
-    addValue(valueField.config?.displayNameFromDS, displayText, lastValue);
-    addValue(valueField.config?.displayName, displayText, lastValue);
-  });
-
-  return values;
-};
+const buildItemValueMap = readTelemetry;
 
 const toNumber = (value: unknown): number | null => {
   if (value === null || value === undefined) {
@@ -125,20 +94,6 @@ const toNumber = (value: unknown): number | null => {
 
 const escapeHtmlAttr = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-const normalizePopIconUrl = (value?: string) => {
-  const raw = value?.trim() ?? '';
-  if (!raw) {
-    return '';
-  }
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:') || raw.startsWith('/')) {
-    return raw;
-  }
-  if (raw.startsWith('public/')) {
-    return `/${raw}`;
-  }
-  return raw;
-};
 
 const buildItemSeriesMap = (series: DataFrame[]) => {
   const values = new Map<string, number[]>();
@@ -209,8 +164,8 @@ const buildItemSeriesWithTimeMap = (series: DataFrame[]) => {
       const count = Math.min(field.values.length, timeField.values.length);
       const seriesValues: SeriesWithTime = { values: [], times: [] };
       for (let i = 0; i < count; i++) {
-        const rawValue = toNumber(field.values.get(i));
-        const rawTime = Number(timeField.values.get(i));
+        const rawValue = toNumber(field.values[i]);
+        const rawTime = Number(timeField.values[i]);
         if (rawValue === null || !Number.isFinite(rawTime)) {
           continue;
         }
@@ -310,56 +265,11 @@ const frameMatchesItems = (frame: DataFrame, itemKeys: Set<string>) => {
 const filterSeriesByItems = (series: DataFrame[], itemKeys: Set<string>) =>
   series.filter((frame) => frameMatchesItems(frame, itemKeys));
 
-const normalizeValue = (value: unknown) =>
-  String(value ?? '')
-    .trim()
-    .toLowerCase();
-
-const resolveRouteStatus = (interfaceItem?: string, onlineValue?: string, itemValueMap?: Map<string, ItemValue>) => {
-  if (!interfaceItem || !itemValueMap) {
-    return 'unknown';
-  }
-  const entry = itemValueMap.get(interfaceItem);
-  if (!entry) {
-    return 'unknown';
-  }
-  const expected = normalizeValue(onlineValue ?? '1');
-  const rawNormalized = normalizeValue(entry.raw);
-  const textNormalized = normalizeValue(entry.text);
-  return rawNormalized === expected || textNormalized === expected ? 'online' : 'down';
-};
-
-const countFlaps = (series: { values: number[]; times: number[] }, windowMs: number) => {
-  if (series.values.length < 2) {
-    return 0;
-  }
-  const latestTime = series.times[series.times.length - 1];
-  if (!latestTime) {
-    return 0;
-  }
-  const windowStart = latestTime - windowMs;
-  let count = 0;
-  for (let i = series.values.length - 1; i > 0; i--) {
-    if (series.times[i] < windowStart) {
-      break;
-    }
-    if (series.values[i] !== series.values[i - 1]) {
-      count += 1;
-    }
-  }
-  return count;
-};
-
-type SparklineProps = {
-  values?: number[];
-  width?: number;
-  height?: number;
-  color: string;
-};
-
+type SparklineProps = { values?: number[]; width?: number; height?: number; color: string };
 const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) => {
+  const theme = useTheme2();
   if (!values || values.length < 2) {
-    return <div style={{ fontSize: 11, color: 'inherit' }}>--</div>;
+    return <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: 'inherit' }}>--</div>;
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -367,281 +277,20 @@ const Sparkline = ({ values, width = 200, height = 60, color }: SparklineProps) 
   const points = values
     .map((value, index) => {
       const x = (index / (values.length - 1)) * width;
-      const y = height - ((value - min) / range) * height;
+      const y = max === min ? height / 2 : height - ((value - min) / range) * height;
       return `${x},${y}`;
     })
     .join(' ');
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block' }}>
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ display: 'block', maxWidth: '100%' }}
+    >
       <polyline points={points} fill="none" stroke={color} strokeWidth={2} />
     </svg>
-  );
-};
-
-type SignalTrendChartProps = {
-  series?: { values: number[]; times: number[] };
-  width: number;
-  height: number;
-  color: string;
-};
-
-const SignalTrendChart = ({ series, width, height, color }: SignalTrendChartProps) => {
-  const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
-
-  const normalizeTime = (value: number) => (value < 1_000_000_000_000 ? value * 1000 : value);
-
-  const marginLeft = 72;
-  const marginBottom = 24;
-  const marginTop = 20;
-  const plotWidth = Math.max(1, width - marginLeft - 6);
-  const plotHeight = Math.max(1, height - marginBottom - marginTop);
-
-  const values = series?.values ?? [];
-  const times = (series?.times ?? []).map(normalizeTime);
-  const validValues = values.filter((v): v is number => Number.isFinite(v));
-
-  if (validValues.length === 0) {
-    return <div style={{ fontSize: 12 }}>Sem dados</div>;
-  }
-
-  const currentValue = validValues[validValues.length - 1];
-  const min = currentValue - 2;
-  const max = currentValue + 2;
-  const range = max - min || 1;
-  const minTime = times[0] ?? 0;
-  const maxTime = times[times.length - 1] ?? minTime;
-  const timeRange = maxTime - minTime || 1;
-
-  const getY = (value: number) => marginTop + plotHeight - ((value - min) / range) * plotHeight;
-  const getX = (time: number) => marginLeft + ((time - minTime) / timeRange) * plotWidth;
-
-  const rawPoints = values.map((value, idx) => ({
-    x: getX(times[idx] ?? minTime),
-    y: getY(value),
-    idx,
-    time: times[idx] ?? minTime,
-    value,
-  }));
-
-  const maxVisiblePoints = Math.max(32, Math.floor(plotWidth / 6));
-  const simplifiedPoints =
-    rawPoints.length <= maxVisiblePoints
-      ? rawPoints
-      : (() => {
-          const bucketSize = Math.ceil(rawPoints.length / maxVisiblePoints);
-          const reduced: typeof rawPoints = [];
-
-          for (let start = 0; start < rawPoints.length; start += bucketSize) {
-            const bucket = rawPoints.slice(start, start + bucketSize);
-            if (bucket.length === 0) {
-              continue;
-            }
-
-            const first = bucket[0];
-            const last = bucket[bucket.length - 1];
-            const minPoint = bucket.reduce((acc, point) => (point.value < acc.value ? point : acc), bucket[0]);
-            const maxPoint = bucket.reduce((acc, point) => (point.value > acc.value ? point : acc), bucket[0]);
-
-            [first, minPoint, maxPoint, last]
-              .sort((a, b) => a.idx - b.idx)
-              .forEach((point) => {
-                if (!reduced.some((existing) => existing.idx === point.idx)) {
-                  reduced.push(point);
-                }
-              });
-          }
-
-          return reduced;
-        })();
-
-  const linePath = simplifiedPoints.length >= 2 ? simplifiedPoints.map((p) => `${p.x},${p.y}`).join(' ') : '';
-  const significantThreshold = Math.max(0.15, range * 0.12);
-  const significantPoints = simplifiedPoints.filter((point, index, list) => {
-    if (index === 0 || index === list.length - 1) {
-      return false;
-    }
-
-    const prev = list[index - 1];
-    const next = list[index + 1];
-    const deltaPrev = Math.abs(point.value - prev.value);
-    const deltaNext = Math.abs(point.value - next.value);
-    const isPeak = point.value > prev.value && point.value > next.value;
-    const isTrough = point.value < prev.value && point.value < next.value;
-
-    return (isPeak || isTrough) && Math.max(deltaPrev, deltaNext) >= significantThreshold;
-  });
-
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    let closestIdx = 0;
-    let closestDist = Infinity;
-    for (let i = 0; i < simplifiedPoints.length; i++) {
-      const dist = Math.abs(simplifiedPoints[i].x - x);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestIdx = simplifiedPoints[i].idx;
-      }
-    }
-    setHoverIndex(closestIdx);
-  };
-
-  const hoveredPoint =
-    hoverIndex !== null && values[hoverIndex] !== undefined
-      ? {
-          value: values[hoverIndex],
-          idx: hoverIndex,
-          x: getX(times[hoverIndex] ?? minTime),
-          y: getY(values[hoverIndex]),
-          time: times[hoverIndex] ?? minTime,
-        }
-      : null;
-
-  const axisTicks = Array.from({ length: 5 }, (_, idx) => minTime + (timeRange * idx) / 4);
-  const yTicks = Array.from({ length: 5 }, (_, idx) => max - (range * idx) / 4);
-  const formatTick = (time: number) =>
-    new Date(time).toLocaleString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-  return (
-    <div style={{ position: 'relative', width, height }}>
-      <svg
-        width={width}
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ display: 'block' }}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        {yTicks.map((tick, index) => {
-          const y = getY(tick);
-          return (
-            <g key={`y-${index}`}>
-              <line
-                x1={marginLeft}
-                y1={y}
-                x2={width - 6}
-                y2={y}
-                stroke="rgba(148,163,184,0.12)"
-                strokeWidth={1}
-              />
-              <text x={marginLeft - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
-                {tick.toFixed(2)} dBm
-              </text>
-            </g>
-          );
-        })}
-        {linePath && (
-          <>
-            <polyline
-              points={linePath}
-              fill="none"
-              stroke={color}
-              strokeWidth={1.6}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={0.72}
-            />
-            <line
-              x1={marginLeft}
-              y1={marginTop}
-              x2={marginLeft}
-              y2={height - marginBottom}
-              stroke="rgba(148,163,184,0.2)"
-              strokeWidth={1}
-            />
-            <line
-              x1={marginLeft}
-              y1={height - marginBottom}
-              x2={width - 6}
-              y2={height - marginBottom}
-              stroke="rgba(148,163,184,0.2)"
-              strokeWidth={1}
-            />
-          </>
-        )}
-        {significantPoints.map((point) => (
-          <circle
-            key={`sig-${point.idx}`}
-            cx={point.x}
-            cy={point.y}
-            r={3.2}
-            fill={color}
-            fillOpacity={0.95}
-            stroke="rgba(15, 23, 42, 0.9)"
-            strokeWidth={1.5}
-          />
-        ))}
-        {hoveredPoint && (
-          <>
-            <line
-              x1={hoveredPoint.x}
-              y1={marginTop}
-              x2={hoveredPoint.x}
-              y2={height - marginBottom}
-              stroke="rgba(250, 204, 21, 0.35)"
-              strokeWidth={1}
-              strokeDasharray="4 4"
-            />
-            <circle
-              cx={hoveredPoint.x}
-              cy={hoveredPoint.y}
-              r={5}
-              fill={color}
-              stroke="#0f172a"
-              strokeWidth={2}
-            />
-          </>
-        )}
-      </svg>
-      {hoveredPoint && (
-        <div
-          style={{
-            position: 'absolute',
-            left: hoveredPoint.x - 45,
-            bottom: height - marginBottom - 8,
-            transform: 'translateX(-50%)',
-            background: 'rgba(15, 23, 42, 0.98)',
-            border: `1px solid ${color}`,
-            borderRadius: 8,
-            padding: '8px 12px',
-            color: '#e2e8f0',
-            fontSize: 11,
-            fontWeight: 600,
-            whiteSpace: 'nowrap',
-            zIndex: 10,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          }}
-        >
-          <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 2 }}>{formatTick(hoveredPoint.time)}</div>
-          <div>{hoveredPoint.value.toFixed(2)}</div>
-          {significantPoints.some((point) => point.idx === hoveredPoint.idx) && (
-            <div style={{ color: '#facc15', fontSize: 9, marginTop: 2 }}>Oscilacao relevante</div>
-          )}
-        </div>
-      )}
-      {axisTicks.map((tick, i) => (
-        <div
-          key={i}
-          style={{
-            position: 'absolute',
-            left: getX(tick) - 40,
-            top: height - 20,
-            width: 80,
-            textAlign: 'center',
-            fontSize: 10,
-            color: '#94a3b8',
-          }}
-        >
-          {formatTick(tick)}
-        </div>
-      ))}
-    </div>
   );
 };
 
@@ -763,7 +412,7 @@ function EnsureHitboxPane({ onReady }: { onReady: () => void }) {
   React.useEffect(() => {
     if (!map.getPane('hitboxPane')) {
       const pane = map.createPane('hitboxPane');
-      pane.style.zIndex = '700';
+      pane.style.zIndex = '450';
       pane.style.pointerEvents = 'auto';
     }
     onReady();
@@ -776,6 +425,11 @@ function CaptureMapRef({ onReady }: { onReady: (map: L.Map) => void }) {
   React.useEffect(() => {
     onReady(map);
   }, [map, onReady]);
+  React.useEffect(() => {
+    const resize = new ResizeObserver(() => map.invalidateSize({ animate: false }));
+    resize.observe(map.getContainer());
+    return () => resize.disconnect();
+  }, [map]);
   return null;
 }
 
@@ -792,8 +446,35 @@ function CaptureMapZoom({ onZoom }: { onZoom: (zoom: number) => void }) {
   return null;
 }
 
-export function MapView({ options, onOptionsChange, data, timeRange, timeZone }: Props) {
+export function MapView({
+  options,
+  onOptionsChange,
+  data,
+  timeRange,
+  timeZone,
+  initialRouteId,
+  initialPopId,
+  tools,
+  fire,
+  rain,
+  filter: externalFilter,
+  onFilter,
+  onRestore,
+}: Props) {
   const theme = useTheme2();
+  const [localFilter, setLocalFilter] = React.useState<NetworkFilter>(emptyFilter);
+  const filter = externalFilter ?? localFilter;
+  const { readings: operationalReadings, referenceTime } = useOperationalReadings(
+    data,
+    timeRange,
+    options.staleAfterSeconds,
+    timeZone
+  );
+  const filtered = React.useMemo(
+    () => filterNetwork(options, filter, operationalReadings),
+    [options, filter, operationalReadings]
+  );
+  const presentation = useStyles2(mapPresentation);
   const centerLat = Number.isFinite(options.centerLat) ? options.centerLat : DEFAULT_CENTER_LAT;
   const centerLng = Number.isFinite(options.centerLng) ? options.centerLng : DEFAULT_CENTER_LNG;
   const zoom = Number.isFinite(options.zoom) ? options.zoom : DEFAULT_ZOOM;
@@ -803,17 +484,17 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   const center: [number, number] = [centerLat, centerLng];
   const mapRef = React.useRef<L.Map | null>(null);
   const fullscreenRef = React.useRef(false);
-  const [selectedRouteId, setSelectedRouteId] = React.useState<string | null>(null);
-  const [selectedPopId, setSelectedPopId] = React.useState<string | null>(null);
+  const [selectedRouteId, setSelectedRouteId] = React.useState<string | null>(initialRouteId ?? null);
+  const [selectedPopId, setSelectedPopId] = React.useState<string | null>(initialPopId ?? null);
   const [selectedLinkSide, setSelectedLinkSide] = React.useState<string | null>(null);
   const [rxHistory, setRxHistory] = React.useState<{
     name: string;
-    series?: { values: number[]; times: number[] };
+    item: string;
   } | null>(null);
+  const [viewport, setViewport] = React.useState<L.LatLngBounds>();
   const [currentZoom, setCurrentZoom] = React.useState(zoom);
-  const [dashTick, setDashTick] = React.useState(0);
+  const [visibleLabels, setVisibleLabels] = React.useState<Set<string>>(new Set());
   const [hitboxReady, setHitboxReady] = React.useState(false);
-  const [activeDownRouteIndex, setActiveDownRouteIndex] = React.useState(0);
   const [statsCollapsed, setStatsCollapsed] = React.useState(true);
   const [eventSearch, setEventSearch] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -822,8 +503,60 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   const rightListRef = React.useRef<HTMLDivElement | null>(null);
   const linkCenterRef = React.useRef<HTMLDivElement | null>(null);
   const [linkLayout, setLinkLayout] = React.useState({ leftX: 0, rightX: 0, top: 0, height: 0, leftListTop: 0 });
+  React.useEffect(() => {
+    if (!selectedRouteId && !selectedPopId && !rxHistory) {
+      return;
+    }
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialogs = containerRef.current?.querySelectorAll<HTMLElement>('[role="dialog"]');
+    const dialog = dialogs?.[dialogs.length - 1];
+    const mapContainer = mapRef.current?.getContainer();
+    if (mapContainer) {
+      mapContainer.inert = true;
+    }
+    const focusable = () =>
+      Array.from(dialog?.querySelectorAll<HTMLElement>('button, a[href], input, select, [tabindex="0"]') ?? []).filter(
+        (element) => !element.hasAttribute('disabled') && element.getClientRects().length > 0
+      );
+    focusable()[0]?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (rxHistory) {
+          setRxHistory(null);
+        } else if (selectedPopId) {
+          setSelectedPopId(null);
+        } else {
+          setSelectedRouteId(null);
+        }
+      }
+      if (event.key === 'Tab') {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', keydown, true);
+    return () => {
+      document.removeEventListener('keydown', keydown, true);
+      if (mapContainer) {
+        mapContainer.inert = false;
+      }
+      if (previousFocus?.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, [selectedRouteId, selectedPopId, rxHistory]);
   const mapZoomScale = Math.pow(2, currentZoom - zoom);
-  const dataSeries = data?.series ?? [];
+  const dataSeries = React.useMemo(() => data?.series ?? [], [data?.series]);
 
   React.useEffect(() => {
     const handler = () => {
@@ -945,16 +678,31 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     if (!options.captureNow) {
       return;
     }
-    const v = getLastMapView();
-    if (v) {
-      onOptionsChange({ ...options, centerLat: v.lat, centerLng: v.lng, zoom: v.zoom, captureNow: false });
+    const ownMap = mapRef.current;
+    if (ownMap) {
+      const center = ownMap.getCenter();
+      onOptionsChange({
+        ...options,
+        centerLat: center.lat,
+        centerLng: center.lng,
+        zoom: ownMap.getZoom(),
+        captureNow: false,
+      });
       return;
     }
     onOptionsChange({ ...options, captureNow: false });
   }, [onOptionsChange, options]);
 
-  const routes = options.routes ?? [];
-  const pops = options.pops ?? [];
+  const routes = React.useMemo(() => options.routes ?? [], [options.routes]);
+  const pops = React.useMemo(() => options.pops ?? [], [options.pops]);
+  const labelMode = options.mapLabelMode ?? 'smart';
+  const updateVisibleLabels = React.useCallback(
+    (ids: Set<string>) =>
+      setVisibleLabels((previous) =>
+        previous.size === ids.size && [...ids].every((id) => previous.has(id)) ? previous : ids
+      ),
+    []
+  );
 
   const focusRoute = (routeId: string) => {
     const route = routes.find((r) => r.id === routeId);
@@ -967,17 +715,21 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     }
   };
 
-  const selectedRoute = selectedRouteId ? (routes.find((route) => route.id === selectedRouteId) ?? null) : null;
+  const selectedRoute = React.useMemo(
+    () => (selectedRouteId ? (routes.find((route) => route.id === selectedRouteId) ?? null) : null),
+    [routes, selectedRouteId]
+  );
   const selectedPop = selectedPopId ? (pops.find((pop) => pop.id === selectedPopId) ?? null) : null;
   const selectedRouteDistance = selectedRoute ? distanceKm(selectedRoute.points) : 0;
   const routeById = React.useMemo(() => new Map(routes.map((route) => [route.id, route] as const)), [routes]);
   const activeItemKeys = React.useMemo(() => {
     const keys = collectMapItemKeys(routes);
+    pops.forEach((pop) => pop.equipments.forEach((equipment) => addItemKey(keys, equipment.statusItem)));
     if (selectedRoute || selectedPop || rxHistory) {
       collectDetailItemKeys(selectedRoute, selectedPop).forEach((key) => keys.add(key));
     }
     return keys;
-  }, [routes, rxHistory, selectedPop, selectedRoute]);
+  }, [routes, pops, rxHistory, selectedPop, selectedRoute]);
   const activeSeries = React.useMemo(
     () => filterSeriesByItems(dataSeries, activeItemKeys),
     [activeItemKeys, dataSeries]
@@ -987,9 +739,10 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     [activeSeries, theme, timeZone]
   );
   const itemSeriesMap = React.useMemo(() => buildItemSeriesMap(activeSeries), [activeSeries]);
+  const rxSeries = React.useMemo(() => buildSignalSeries(activeSeries), [activeSeries]);
   const itemSeriesTimeMap = React.useMemo(() => buildItemSeriesWithTimeMap(activeSeries), [activeSeries]);
 
-  const formatBitsPerSec = (value: number | null | undefined): string => {
+  const formatBitsPerSec = React.useCallback((value: number | null | undefined): string => {
     if (value === null || value === undefined || !Number.isFinite(value)) {
       return '--';
     }
@@ -1001,7 +754,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
       unitIndex++;
     }
     return `${v.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
-  };
+  }, []);
 
   const getMetricValue = React.useCallback(
     (item?: string) => (item ? itemValueMap.get(item) : undefined),
@@ -1060,71 +813,48 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
   };
 
   const computeRouteStatus = React.useCallback(
-    (route: (typeof routes)[number]) => {
-      const base = resolveRouteStatus(route.interfaceItem, route.onlineValue, itemValueMap);
-      if (base === 'down') {
-        return 'down';
-      }
-      const thresholds = route.thresholds;
-      if (!thresholds?.enabled) {
-        return base;
-      }
-      const rxValue = getRouteMetricNumeric(route, 'rx');
-      const txValue = getRouteMetricNumeric(route, 'tx');
-      const downloadValue = getRouteMetricNumeric(route, 'download');
-      const uploadValue = getRouteMetricNumeric(route, 'upload');
-      const bandwidthValue =
-        downloadValue !== null && uploadValue !== null
-          ? Math.max(downloadValue, uploadValue)
-          : (downloadValue ?? uploadValue ?? null);
-      const flappingWindowMs = (thresholds.flappingWindowMin ?? 0) * 60000;
-      const flappingCount = thresholds.flappingCount ?? 0;
-      const series = route.interfaceItem ? itemSeriesTimeMap.get(route.interfaceItem) : undefined;
-      const flaps = series && flappingWindowMs > 0 ? countFlaps(series, flappingWindowMs) : 0;
-
-      const inAlert =
-        (thresholds.rxLow !== undefined && rxValue !== null && rxValue <= thresholds.rxLow) ||
-        (thresholds.txLow !== undefined && txValue !== null && txValue <= thresholds.txLow) ||
-        (thresholds.bandwidthHigh !== undefined &&
-          bandwidthValue !== null &&
-          bandwidthValue >= thresholds.bandwidthHigh) ||
-        (flappingCount > 0 && flaps >= flappingCount);
-
-      return inAlert ? 'alert' : base;
-    },
-    [getRouteMetricNumeric, itemSeriesTimeMap, itemValueMap]
+    (route: (typeof routes)[number]) => routeStatus(route, operationalReadings),
+    [operationalReadings]
   );
-
   const computePopStatus = React.useCallback(
-    (pop: (typeof pops)[number]) => {
-      const statusItems = (pop.equipments ?? []).filter((equipment) => equipment.statusItem?.trim());
-      if (statusItems.length === 0) {
-        return 'online';
-      }
-
-      return statusItems.some(
-        (equipment) => resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap) === 'down'
-      )
-        ? 'down'
-        : 'online';
-    },
-    [itemValueMap]
+    (pop: (typeof pops)[number]) => popStatus(pop, operationalReadings),
+    [operationalReadings]
   );
 
   const selectedRouteStatus = selectedRoute ? computeRouteStatus(selectedRoute) : 'unknown';
-  const selectedRouteStatusLabel =
-    selectedRouteStatus === 'online'
-      ? 'Online'
-      : selectedRouteStatus === 'down'
-        ? 'Down'
-        : selectedRouteStatus === 'alert'
-          ? 'Degradado'
-          : 'Sem dados';
-  const selectedRouteDownTime =
-    selectedRoute?.interfaceItem && selectedRouteStatus === 'down'
-      ? getLastChangeMinutes(selectedRoute.interfaceItem, itemSeriesTimeMap)
-      : null;
-  const downRoutes = routes.filter((route) => route.points.length > 1 && computeRouteStatus(route) === 'down');
+  const mapLabels = React.useMemo(
+    () =>
+      filtered.pops
+        .filter((p) => p.showName !== false)
+        .map((pop) => ({
+          id: pop.id,
+          name: pop.name || 'Sem nome',
+          lat: pop.lat,
+          lng: pop.lng,
+          iconSize: Math.min(
+            256,
+            Math.max(8, (pop.iconSizePx ?? 32) * (pop.iconScaleMode === 'fixed' ? 1 : mapZoomScale))
+          ),
+          priority: selectedPopId === pop.id ? 3 : computePopStatus(pop) === 'down' ? 2 : 0,
+        })),
+    [filtered.pops, mapZoomScale, selectedPopId, computePopStatus]
+  );
+  const selectedRouteStatusLabel = telemetryStatusLabel[selectedRouteStatus];
+  const selectedOutage =
+    selectedRoute && selectedRouteStatus === 'down'
+      ? [
+          ...routeHistory(
+            selectedRoute,
+            operationalReadings,
+            timeRange.from.valueOf(),
+            referenceTime,
+            (options.staleAfterSeconds ?? 300) * 1000
+          ).incidents,
+        ]
+          .reverse()
+          .find((event) => event.end === undefined)
+      : undefined;
+  const selectedRouteDownTime = selectedOutage ? (referenceTime - selectedOutage.start) / 60000 : null;
   const normalizedEventSearch = eventSearch.trim().toLowerCase();
   const routeIncidentItems = React.useMemo(() => {
     const toPriority = (status: string) => {
@@ -1144,21 +874,8 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
       .map((route) => {
         const status = computeRouteStatus(route);
         const statusColor =
-          status === 'online'
-            ? route.colors.online
-            : status === 'down'
-              ? route.colors.down
-              : status === 'alert'
-                ? route.colors.alert
-                : theme.colors.text.secondary;
-        const statusLabel =
-          status === 'online'
-            ? 'Online'
-            : status === 'down'
-              ? 'Critico'
-              : status === 'alert'
-                ? 'Degradado'
-                : 'Sem dados';
+          status === 'unknown' || status === 'maintenance' ? telemetryStatusColor(status, theme) : route.colors[status];
+        const statusLabel = telemetryStatusLabel[status];
 
         return {
           id: route.id,
@@ -1175,7 +892,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
         }
         return a.name.localeCompare(b.name, 'pt-BR');
       });
-  }, [computeRouteStatus, routes, theme.colors.text.secondary]);
+  }, [computeRouteStatus, routes, theme]);
 
   const visibleRouteIncidents = React.useMemo(() => {
     if (!normalizedEventSearch) {
@@ -1215,24 +932,6 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
       .slice(0, 3);
   }, [getMetricValue, getNumericValue, routes]);
 
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setDashTick((prev) => (prev + transportAnimationSpeed) % 4000);
-    }, 60);
-    return () => clearInterval(interval);
-  }, [transportAnimationSpeed]);
-
-  React.useEffect(() => {
-    if (downRoutes.length <= 1) {
-      setActiveDownRouteIndex(0);
-      return;
-    }
-    const interval = setInterval(() => {
-      setActiveDownRouteIndex((prev) => (prev + 1) % downRoutes.length);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [downRoutes.length]);
-
   const formatMinutes = (value: number | null) => {
     if (value === null || value === undefined || Number.isNaN(value)) {
       return '--';
@@ -1245,37 +944,31 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
     return `${hours}h ${minutes}m`;
   };
 
-  const getSeriesTimeUnit = (latestTime: number) => (latestTime < 1_000_000_000_000 ? 's' : 'ms');
-
-  const filterSeriesByTimeRange = React.useCallback(
-    (series?: { values: number[]; times: number[] }) => {
-      if (!series || series.values.length === 0) {
-        return series;
-      }
-
-      const fromMs = timeRange.from.valueOf();
-      const toMs = timeRange.to.valueOf();
-      const isSeconds = getSeriesTimeUnit(series.times[series.times.length - 1]) === 's';
-      const rangeStart = isSeconds ? Math.floor(fromMs / 1000) : fromMs;
-      const rangeEnd = isSeconds ? Math.ceil(toMs / 1000) : toMs;
-      const filtered = { values: [] as number[], times: [] as number[] };
-
-      for (let i = 0; i < series.values.length; i++) {
-        const time = series.times[i];
-        if (time >= rangeStart && time <= rangeEnd) {
-          filtered.values.push(series.values[i]);
-          filtered.times.push(time);
-        }
-      }
-
-      return filtered.values.length > 0 ? filtered : series;
-    },
-    [timeRange.from, timeRange.to]
-  );
-
   return (
-    <div ref={containerRef} style={{ height: '100%', width: '100%', display: 'flex' }}>
+    <div
+      ref={containerRef}
+      className={presentation.root}
+      data-testid="jmap-original-map"
+      style={{ height: '100%', minHeight: tools ? theme.spacing(48) : undefined, width: '100%', display: 'flex' }}
+    >
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+        {(tools || fire?.enabled || rain?.enabled) && (
+          <div className={presentation.tools}>
+            {tools}
+            {rain && (
+              <RainControls
+                rain={rain}
+                onLocate={(lat, lng) => mapRef.current?.flyTo([lat, lng], Math.max(mapRef.current.getZoom(), 12))}
+              />
+            )}
+            {fire && (
+              <FireControls
+                fire={fire}
+                onLocate={(lat, lng) => mapRef.current?.flyTo([lat, lng], Math.max(12, mapRef.current.getZoom()))}
+              />
+            )}
+          </div>
+        )}
         <style>
           {`
           .jmap-popup .leaflet-popup-content-wrapper,
@@ -1458,11 +1151,15 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             fontSize: 16,
           }}
         >
-          ⛶
+          <Icon name="expand-arrows" />
         </button>
 
         {selectedRoute && (
           <div
+            className={presentation.backdrop}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Detalhes da rota"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1489,12 +1186,11 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                 overflow: 'hidden',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className={presentation.dialogHeading}>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedRoute.name || 'Sem nome'}</div>
-                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                    Distancia total: {selectedRouteDistance.toFixed(2)} km
-                  </div>
+                  <small>ROTA DE TRANSPORTE</small>
+                  <h3>{selectedRoute.name || 'Sem nome'}</h3>
+                  <small>Distancia total: {selectedRouteDistance.toFixed(2)} km</small>
                 </div>
                 <button
                   onClick={() => setSelectedRouteId(null)}
@@ -1511,7 +1207,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <div className={presentation.equipmentGrid}>
                 <div
                   style={{
                     border: `1px solid ${theme.colors.border.weak}`,
@@ -1520,7 +1216,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     background: theme.colors.background.secondary,
                   }}
                 >
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                  <div
+                    style={{
+                      fontSize: theme.typography.bodySmall.fontSize,
+                      textTransform: 'uppercase',
+                      color: theme.colors.text.secondary,
+                    }}
+                  >
                     Status
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
@@ -1529,7 +1231,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         display: 'inline-block',
                         padding: '4px 10px',
                         borderRadius: 999,
-                        fontSize: 11,
+                        fontSize: theme.typography.bodySmall.fontSize,
                         fontWeight: 700,
                         background:
                           selectedRouteStatus === 'online'
@@ -1560,19 +1262,25 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     >
                       <div
                         style={{
-                          fontSize: 10,
+                          fontSize: theme.typography.bodySmall.fontSize,
                           color: '#fca5a5',
                           fontWeight: 600,
                           textTransform: 'uppercase',
                           marginBottom: 4,
                         }}
                       >
-                        SLA - Tempo fora
+                        {selectedOutage?.boundedStart ? 'Tempo mínimo observado em falha' : 'Tempo observado em falha'}
                       </div>
                       <div style={{ fontSize: 18, fontWeight: 700, color: '#f87171' }}>
                         {formatMinutes(selectedRouteDownTime)}
                       </div>
-                      <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 4 }}>
+                      <div
+                        style={{
+                          fontSize: theme.typography.bodySmall.fontSize,
+                          color: theme.colors.text.secondary,
+                          marginTop: 4,
+                        }}
+                      >
                         {selectedRouteDownTime < 60
                           ? 'Menos de 1 hora'
                           : selectedRouteDownTime < 1440
@@ -1590,7 +1298,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     background: theme.colors.background.secondary,
                   }}
                 >
-                  <div style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}>
+                  <div
+                    style={{
+                      fontSize: theme.typography.bodySmall.fontSize,
+                      textTransform: 'uppercase',
+                      color: theme.colors.text.secondary,
+                    }}
+                  >
                     Capacidade total
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
@@ -1604,10 +1318,46 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 12,
-                  overflowY: 'auto',
+                  flexShrink: 0,
                   paddingRight: 4,
                 }}
               >
+                <div className={presentation.metricGrid}>
+                  {[
+                    ...selectedRoute.metrics
+                      .filter((metric) => metric.enabled && metric.zabbixItem)
+                      .map((metric) => ({ id: `route-${metric.id}`, name: metric.label, item: metric.zabbixItem })),
+                    ...selectedRoute.extraMetrics
+                      .filter((metric) => metric.showInDetails !== false && metric.item)
+                      .map((metric) => ({ ...metric, id: `extra-${metric.id}` })),
+                    ...selectedRoute.trunks.flatMap((trunk) =>
+                      trunk.interfaces.flatMap((iface) =>
+                        iface.metrics
+                          .filter((metric) => metric.item)
+                          .map((metric) => ({
+                            id: JSON.stringify([trunk.id, iface.id, metric.id]),
+                            name: `${trunk.name} / ${iface.name} · ${metric.label}`,
+                            item: metric.item,
+                          }))
+                      )
+                    ),
+                  ].map((metric) => (
+                    <div key={metric.id} className={presentation.metricCard}>
+                      <div className={presentation.metricHeading}>
+                        <span>{metric.name || 'Métrica'}</span>
+                        <span className={presentation.metricValue}>{getMetricValue(metric.item)?.text ?? '--'}</span>
+                      </div>
+                      <div className={presentation.trend}>
+                        <Sparkline
+                          values={metric.item ? itemSeriesMap.get(metric.item) : undefined}
+                          width={240}
+                          height={parseFloat(theme.spacing(3))}
+                          color={theme.colors.primary.text}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <div
                   style={{
                     border: `1px solid ${theme.colors.border.weak}`,
@@ -1655,7 +1405,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2' }}>
                           <div style={{ fontSize: 12, fontWeight: 600 }}>{leftTrunk.name || 'Cidade 1'}</div>
                           {leftTrunk.description ? (
-                            <div style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 }}>
+                            <div
+                              style={{
+                                fontSize: theme.typography.bodySmall.fontSize,
+                                color: theme.colors.text.secondary,
+                                marginTop: 2,
+                              }}
+                            >
                               {leftTrunk.description}
                             </div>
                           ) : null}
@@ -1675,10 +1431,9 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                                 onClick={() => {
                                   setSelectedLinkSide(side);
                                   if (iface?.rxItem) {
-                                    const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
                                     setRxHistory({
                                       name: iface.name || 'Interface',
-                                      series,
+                                      item: iface.rxItem,
                                     });
                                   }
                                 }}
@@ -1703,10 +1458,20 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                                   </div>
                                   <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
                                     <span>
-                                      TX: <strong>{txValue?.text ?? '--'}</strong>
+                                      TX: <strong>{txValue?.text ?? 'Sem dados'}</strong>
                                     </span>
                                     <span>
-                                      RX: <strong>{rxValue?.text ?? '--'}</strong>
+                                      RX:{' '}
+                                      <strong
+                                        style={{
+                                          color:
+                                            iface?.rxItem && (getNumericValue(iface.rxItem) ?? Infinity) <= -35
+                                              ? theme.colors.error.text
+                                              : theme.colors.text.primary,
+                                        }}
+                                      >
+                                        {rxValue?.text ?? 'Sem dados'}
+                                      </strong>
                                     </span>
                                   </div>
                                 </div>
@@ -1724,7 +1489,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                               {rightTrunk.description ? (
                                 <div
                                   style={{
-                                    fontSize: 11,
+                                    fontSize: theme.typography.bodySmall.fontSize,
                                     color: theme.colors.text.secondary,
                                     marginTop: 2,
                                     textAlign: 'right',
@@ -1755,10 +1520,9 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                                     onClick={() => {
                                       setSelectedLinkSide(side);
                                       if (iface?.rxItem) {
-                                        const series = itemSeriesTimeMap.get(iface.rxItem ?? '');
                                         setRxHistory({
                                           name: iface.name || 'Interface',
-                                          series,
+                                          item: iface.rxItem,
                                         });
                                       }
                                     }}
@@ -1785,10 +1549,20 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                                       </div>
                                       <div style={{ display: 'flex', gap: 8, fontSize: 10 }}>
                                         <span>
-                                          TX: <strong>{txValue?.text ?? '--'}</strong>
+                                          TX: <strong>{txValue?.text ?? 'Sem dados'}</strong>
                                         </span>
                                         <span>
-                                          RX: <strong>{rxValue?.text ?? '--'}</strong>
+                                          RX:{' '}
+                                          <strong
+                                            style={{
+                                              color:
+                                                iface?.rxItem && (getNumericValue(iface.rxItem) ?? Infinity) <= -35
+                                                  ? theme.colors.error.text
+                                                  : theme.colors.text.primary,
+                                            }}
+                                          >
+                                            {rxValue?.text ?? 'Sem dados'}
+                                          </strong>
                                         </span>
                                       </div>
                                     </div>
@@ -1830,7 +1604,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                                     (leftRx !== null && leftRx <= -35) || (rightRx !== null && rightRx <= -35);
                                   const y = idx * (rowHeight + rowGap) + rowHeight / 2;
                                   const width = Math.max(0, linkLayout.rightX - linkLayout.leftX);
-                                  const color = down ? '#ef4444' : '#22c55e';
+                                  const color = down ? theme.colors.error.text : theme.colors.success.text;
                                   return (
                                     <g key={`link-${side}`}>
                                       <line
@@ -1872,6 +1646,10 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
 
         {rxHistory && (
           <div
+            className={presentation.backdrop}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Histórico do sinal RX"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1887,6 +1665,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               style={{
                 width: 'min(760px, 92vw)',
                 maxHeight: '80vh',
+                overflowY: 'auto',
                 background: theme.colors.background.primary,
                 border: `1px solid ${theme.colors.border.medium}`,
                 borderRadius: 12,
@@ -1898,12 +1677,16 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               }}
             >
               {(() => {
-                const filteredSeries = filterSeriesByTimeRange(rxHistory.series);
+                const filteredSeries = signalWindow(
+                  rxSeries.get(rxHistory.item),
+                  timeRange.from.valueOf(),
+                  timeRange.to.valueOf()
+                );
                 return (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontSize: 15, fontWeight: 700 }}>
-                        Historico RX - {rxHistory.name}
+                        Histórico RX · {rxHistory.name}
                         {null}
                       </div>
                       <button
@@ -1923,11 +1706,17 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                     <div style={{ border: `1px solid ${theme.colors.border.weak}`, borderRadius: 10, padding: 12 }}>
                       <SignalTrendChart
                         series={filteredSeries}
-                        width={680}
-                        height={180}
-                        color={theme.colors.success.main}
+                        from={timeRange.from.valueOf()}
+                        to={timeRange.to.valueOf()}
+                        timeZone={timeZone}
                       />
-                      <div style={{ fontSize: 10, color: theme.colors.text.secondary, marginTop: 6 }}>
+                      <div
+                        style={{
+                          fontSize: theme.typography.bodySmall.fontSize,
+                          color: theme.colors.text.secondary,
+                          marginTop: 6,
+                        }}
+                      >
                         Periodo do painel: {timeRange.from.format('DD/MM/YYYY HH:mm')} ate{' '}
                         {timeRange.to.format('DD/MM/YYYY HH:mm')}
                       </div>
@@ -1941,6 +1730,10 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
 
         {selectedPop && (
           <div
+            className={presentation.backdrop}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Equipamentos do POP"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1967,12 +1760,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                 overflow: 'hidden',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className={presentation.dialogHeading}>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedPop.name || 'Sem nome'}</div>
-                  <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                  <small>PONTO DE PRESENÇA · {selectedPop.equipments.length} EQUIPAMENTOS</small>
+                  <h3>{selectedPop.name || 'Sem nome'}</h3>
+                  <small>
                     {selectedPop.lat.toFixed(4)}, {selectedPop.lng.toFixed(4)}
-                  </div>
+                  </small>
                 </div>
                 <button
                   onClick={() => setSelectedPopId(null)}
@@ -1989,63 +1783,84 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+              <div className={presentation.equipmentGrid}>
                 {(selectedPop.equipments ?? []).length === 0 ? (
                   <div style={{ fontSize: 12, color: theme.colors.text.secondary }}>Nenhum equipamento cadastrado</div>
                 ) : (
                   selectedPop.equipments.map((equipment) => {
                     const statusValue = equipment.statusItem ? getMetricValue(equipment.statusItem) : undefined;
-                    const status = resolveRouteStatus(equipment.statusItem, equipment.onlineValue ?? '1', itemValueMap);
+                    const status = equipmentStatus(equipment, operationalReadings);
                     const lastChange = getLastChangeMinutes(equipment.statusItem, itemSeriesTimeMap);
-                    const visibleMetrics =
-                      equipment.metrics?.filter((metric) => (metric.showInDetails ?? true) && metric.item) ?? [];
+                    const customMetrics = equipment.metrics ?? [];
+                    const builtInMetrics = [
+                      { id: 'builtin-cpu', name: 'CPU', item: equipment.cpuItem, showInDetails: equipment.cpuShow },
+                      {
+                        id: 'builtin-memory',
+                        name: 'Memória',
+                        item: equipment.memoryItem,
+                        showInDetails: equipment.memoryShow,
+                      },
+                      {
+                        id: 'builtin-temperature',
+                        name: 'Temperatura',
+                        item: equipment.temperatureItem,
+                        showInDetails: equipment.temperatureShow,
+                      },
+                      {
+                        id: 'builtin-uptime',
+                        name: 'Uptime',
+                        item: equipment.uptimeItem,
+                        showInDetails: equipment.uptimeShow,
+                      },
+                    ].filter((metric) => !customMetrics.some((custom) => custom.item === metric.item));
+                    const visibleMetrics = [...builtInMetrics, ...customMetrics].filter(
+                      (metric) => metric.showInDetails !== false && metric.item
+                    );
 
                     return (
                       <div
                         key={equipment.id}
+                        className={presentation.equipmentCard}
                         style={{
-                          border: `1px solid ${theme.colors.border.weak}`,
-                          borderRadius: 10,
-                          padding: 12,
-                          background: theme.colors.background.secondary,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 8,
+                          borderTopColor:
+                            status === 'online'
+                              ? theme.colors.success.text
+                              : status === 'down'
+                                ? theme.colors.error.text
+                                : theme.colors.text.secondary,
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div className={presentation.equipmentHeading}>
                           <div>
-                            <div style={{ fontSize: 13, fontWeight: 700 }}>{equipment.name || 'Equipamento'}</div>
-                            <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
-                              {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
+                            <img
+                              alt=""
+                              src={`public/plugins/jakson-jmap-panel/img/${equipment.type?.toLowerCase().includes('olt') ? 'pop-olt.svg' : equipment.type?.toLowerCase().includes('switch') ? 'sw.png' : 'pop-router.svg'}`}
+                            />
+                            <div>
+                              <strong>{equipment.name || 'Equipamento'}</strong>
+                              <small>
+                                {equipment.ip || '--'} {equipment.type ? `• ${equipment.type}` : ''}
+                              </small>
                             </div>
                           </div>
                           <span
+                            className={presentation.statusBadge}
                             style={{
-                              display: 'inline-block',
-                              padding: '4px 10px',
-                              borderRadius: 999,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              background:
+                              color:
                                 status === 'online'
-                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  ? theme.colors.success.text
                                   : status === 'down'
-                                    ? 'rgba(239, 68, 68, 0.15)'
-                                    : 'rgba(245, 158, 11, 0.15)',
-                              border:
-                                status === 'online'
-                                  ? '1px solid rgba(16, 185, 129, 0.35)'
-                                  : status === 'down'
-                                    ? '1px solid rgba(239, 68, 68, 0.35)'
-                                    : '1px solid rgba(245, 158, 11, 0.35)',
+                                    ? theme.colors.error.text
+                                    : theme.colors.text.secondary,
                             }}
                           >
-                            {status === 'online' ? 'Online' : status === 'down' ? 'Down' : 'Sem dados'}
+                            {telemetryStatusLabel[status]}
                           </span>
                         </div>
 
-                        <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>
+                        <div
+                          style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}
+                        >
                           Status: <span style={{ color: theme.colors.text.primary }}>{statusValue?.text ?? '--'}</span>
                           {lastChange !== null && (
                             <span style={{ marginLeft: 8 }}>Última mudança: {formatMinutes(lastChange)}</span>
@@ -2063,7 +1878,11 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                             }}
                           >
                             <div
-                              style={{ fontSize: 11, textTransform: 'uppercase', color: theme.colors.text.secondary }}
+                              style={{
+                                fontSize: theme.typography.bodySmall.fontSize,
+                                textTransform: 'uppercase',
+                                color: theme.colors.text.secondary,
+                              }}
                             >
                               Observação
                             </div>
@@ -2072,37 +1891,22 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         )}
 
                         {visibleMetrics.length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div className={presentation.metricGrid}>
                             {visibleMetrics.map((metric) => {
                               const value = metric.item ? getMetricValue(metric.item) : undefined;
                               const series = metric.item ? itemSeriesMap.get(metric.item) : undefined;
                               return (
-                                <div
-                                  key={metric.id}
-                                  style={{
-                                    border: `1px solid ${theme.colors.border.weak}`,
-                                    borderRadius: 8,
-                                    padding: 8,
-                                    background: theme.colors.background.primary,
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      fontSize: 12,
-                                      fontWeight: 600,
-                                    }}
-                                  >
+                                <div key={metric.id} className={presentation.metricCard}>
+                                  <div className={presentation.metricHeading}>
                                     <span>{metric.name || 'Metrica'}</span>
-                                    <span>{value?.text ?? '--'}</span>
+                                    <span className={presentation.metricValue}>{value?.text ?? '--'}</span>
                                   </div>
-                                  <div style={{ marginTop: 6 }}>
+                                  <div className={presentation.trend}>
                                     <Sparkline
                                       values={series}
                                       width={240}
-                                      height={60}
-                                      color={theme.colors.success.main}
+                                      height={parseFloat(theme.spacing(3))}
+                                      color={theme.colors.primary.text}
                                     />
                                   </div>
                                 </div>
@@ -2125,8 +1929,21 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
           zoomSnap={0.25}
           zoomDelta={0.25}
           style={{ height: '100%', width: '100%' }}
-          className="jmap-map-container"
+          className={`jmap-map-container ${options.mapTone !== 'original' && !['google_satellite', 'google_hybrid', 'carto_dark'].includes(options.mapProvider) ? presentation.mutedMap : ''}`}
         >
+          {labelMode === 'smart' && (
+            <MapLabels
+              labels={mapLabels}
+              fontSize={parseFloat(String(theme.typography.bodySmall.fontSize))}
+              fontFamily={theme.typography.fontFamily}
+              maxWidth={parseFloat(theme.spacing(25))}
+              padding={parseFloat(theme.spacing(1))}
+              gap={parseFloat(theme.spacing(1))}
+              onVisible={updateVisibleLabels}
+            />
+          )}
+          <ConfiguredMapView lat={centerLat} lng={centerLng} zoom={zoom} />
+          <ViewportCapture onBounds={setViewport} />
           <CaptureLeafletView />
           <CaptureMapInteraction onInteract={() => {}} />
           <CaptureMapRef
@@ -2146,15 +1963,27 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
             maxZoom={20}
             crossOrigin
           />
-          {routes.map((route) => {
-            if (route.points.length <= 1) {
+          {filtered.routes.map((route) => {
+            if (
+              route.points.length <= 1 ||
+              (viewport &&
+                !viewport.intersects(L.latLngBounds(route.points.map((p) => [p.lat, p.lng] as L.LatLngTuple))))
+            ) {
               return null;
             }
             const status = computeRouteStatus(route);
             const statusColor =
-              status === 'online' ? route.colors.online : status === 'down' ? route.colors.down : route.colors.alert;
+              status === 'unknown' || status === 'maintenance'
+                ? telemetryStatusColor(status, theme)
+                : route.colors[status];
             const statusClass =
-              status === 'online' ? 'jmap-route--online' : status === 'down' ? 'jmap-route--down' : 'jmap-route--alert';
+              status === 'unknown'
+                ? 'jmap-route--unknown'
+                : status === 'online'
+                  ? 'jmap-route--online'
+                  : status === 'down'
+                    ? 'jmap-route--down'
+                    : 'jmap-route--alert';
             const modeClass = transportLineAnimation === 'static' ? 'jmap-route--mode-static' : 'jmap-route--mode-flow';
             const dashArray =
               transportLineAnimation === 'static' && status !== 'down'
@@ -2164,17 +1993,19 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                   : status === 'down'
                     ? '6 8'
                     : '8 10';
-            const speed = status === 'online' ? 2 : status === 'down' ? 3.5 : 1.5;
-            const dashOffset = transportLineAnimation === 'flow' ? -(dashTick * speed) % 240 : 0;
             return (
               <React.Fragment key={route.id}>
+                <Polyline
+                  positions={route.points.map((p) => [p.lat, p.lng])}
+                  interactive={false}
+                  pathOptions={{ color: theme.colors.background.canvas, opacity: 0.8, weight: transportLineWeight + 3 }}
+                />
                 <Polyline
                   positions={route.points.map((p) => [p.lat, p.lng])}
                   pathOptions={{
                     color: statusColor,
                     className: `jmap-route ${statusClass} ${modeClass}`.trim(),
                     dashArray,
-                    dashOffset: dashOffset ? `${dashOffset}` : undefined,
                     weight: transportLineWeight,
                     lineCap: 'round',
                     lineJoin: 'round',
@@ -2206,184 +2037,154 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               </React.Fragment>
             );
           })}
-          {pops.map((pop) => {
-            const popStatus = computePopStatus(pop);
-            const iconUrl = normalizePopIconUrl(pop.iconUrl);
-            const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
-            const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
-            const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
-            const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
-            const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
-            const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
-            const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
-            const tooltipOffsetY = -(Math.round(iconSizePx / 2) + Math.max(8, Math.round(iconSizePx * 0.4)));
-            const tooltipFontSize = Math.max(9, Math.min(18, Math.round(11 * Math.sqrt(iconZoomScale))));
-            const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
-            const statusClass = popStatus === 'down' ? 'jmap-pop-icon--down' : '';
-            const icon = iconUrl
-              ? L.divIcon({
-                  className: '',
-                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;">
+          {filtered.pops
+            .filter((pop) => !viewport || viewport.contains([pop.lat, pop.lng]))
+            .map((pop) => {
+              const popStatus = computePopStatus(pop);
+              const iconUrl = normalizePopIconUrl(
+                pop.iconUrl || 'public/plugins/jakson-jmap-panel/img/pop-datacenter.svg'
+              );
+              const safeIconUrl = iconUrl ? escapeHtmlAttr(iconUrl) : '';
+              const baseIconSizePx = Math.min(128, Math.max(16, pop.iconSizePx ?? 32));
+              const iconScaleMode = pop.iconScaleMode === 'fixed' ? 'fixed' : 'map';
+              const iconZoomScale = iconScaleMode === 'fixed' ? 1 : mapZoomScale;
+              const iconSizePx = Math.min(256, Math.max(8, Math.round(baseIconSizePx * iconZoomScale)));
+              const iconInnerSizePx = Math.max(6, Math.round(iconSizePx * 0.875));
+              const iconRadiusPx = Math.max(4, Math.round(iconSizePx * 0.2));
+              const tooltipOffsetX = Math.round(iconSizePx / 2) + parseFloat(theme.spacing(1));
+              const hitboxRadius = Math.max(10, Math.round(iconSizePx * 0.75));
+              const statusClass = popStatus === 'down' ? 'jmap-pop-icon--down' : '';
+              const popColor =
+                popStatus === 'down'
+                  ? theme.colors.error.text
+                  : popStatus === 'online'
+                    ? theme.colors.success.text
+                    : theme.colors.text.secondary;
+              const icon = iconUrl
+                ? L.divIcon({
+                    className: '',
+                    html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:${iconRadiusPx}px;border-color:${popColor};">
                   <img class="jmap-pop-icon__img" style="width:${iconInnerSizePx}px;height:${iconInnerSizePx}px;" src="${safeIconUrl}" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.onerror=null;this.style.display='none';if(this.parentElement){this.parentElement.classList.add('jmap-pop-icon--fallback');}" />
                  </div>`,
-                  iconSize: [iconSizePx, iconSizePx],
-                  iconAnchor: [iconSizePx / 2, iconSizePx / 2],
-                })
-              : L.divIcon({
-                  className: '',
-                  html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;"></div>`,
-                  iconSize: [iconSizePx, iconSizePx],
-                  iconAnchor: [iconSizePx / 2, iconSizePx / 2],
-                });
-            return (
-              <React.Fragment key={pop.id}>
-                {pop.showName !== false && (
-                  <Marker position={[pop.lat, pop.lng]} icon={icon}>
-                    <Tooltip
-                      className="jmap-tooltip"
-                      direction="top"
-                      permanent
-                      offset={[0, tooltipOffsetY]}
-                      interactive={false}
+                    iconSize: [iconSizePx, iconSizePx],
+                    iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+                  })
+                : L.divIcon({
+                    className: '',
+                    html: `<div class="jmap-pop-icon ${statusClass}" style="width:${iconSizePx}px;height:${iconSizePx}px;border-radius:50%;"></div>`,
+                    iconSize: [iconSizePx, iconSizePx],
+                    iconAnchor: [iconSizePx / 2, iconSizePx / 2],
+                  });
+              return (
+                <React.Fragment key={pop.id}>
+                  {pop.showName !== false && (
+                    <Marker
+                      position={[pop.lat, pop.lng]}
+                      icon={icon}
+                      title={pop.name || 'Sem nome'}
+                      alt={pop.name || 'Sem nome'}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedRouteId(null);
+                          setSelectedPopId(pop.id);
+                        },
+                      }}
                     >
-                      <div style={{ fontSize: tooltipFontSize, fontWeight: 600 }}>{pop.name || 'Sem nome'}</div>
-                    </Tooltip>
-                  </Marker>
-                )}
-                {pop.showName === false && (
-                  <Marker position={[pop.lat, pop.lng]} icon={icon} />
-                )}
-                {hitboxReady && (
-                  <CircleMarker
-                    center={[pop.lat, pop.lng]}
-                    radius={hitboxRadius}
-                    pane="hitboxPane"
-                    pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
-                    interactive
-                    bubblingMouseEvents={false}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedRouteId(null);
-                        setSelectedPopId(pop.id);
-                      },
-                    }}
-                  />
-                )}
-              </React.Fragment>
-            );
-          })}
+                      <Tooltip
+                        key={`${labelMode}-${visibleLabels.has(pop.id)}`}
+                        className={`jmap-tooltip ${presentation.popLabel}`}
+                        direction="right"
+                        permanent={labelMode === 'smart' ? visibleLabels.has(pop.id) : labelMode !== 'hover'}
+                        offset={[tooltipOffsetX, 0]}
+                        interactive={false}
+                      >
+                        <div className={presentation.labelTitle}>
+                          <span style={{ background: popColor }} />
+                          {pop.name || 'Sem nome'}
+                        </div>
+                        {(labelMode === 'details' || labelMode === 'hover') && (
+                          <div
+                            style={{
+                              color:
+                                popStatus === 'down'
+                                  ? theme.colors.error.text
+                                  : popStatus === 'online'
+                                    ? theme.colors.success.text
+                                    : theme.colors.text.secondary,
+                              fontSize: theme.typography.bodySmall.fontSize,
+                            }}
+                          >
+                            {pop.equipments.length} equipamento(s) ·{' '}
+                            {popStatus === 'down' ? 'Indisponível' : popStatus === 'online' ? 'Online' : 'Sem dados'}
+                          </div>
+                        )}
+                      </Tooltip>
+                    </Marker>
+                  )}
+                  {pop.showName === false && (
+                    <Marker
+                      position={[pop.lat, pop.lng]}
+                      icon={icon}
+                      title={pop.name || 'Sem nome'}
+                      alt={pop.name || 'Sem nome'}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedRouteId(null);
+                          setSelectedPopId(pop.id);
+                        },
+                      }}
+                    />
+                  )}
+                  {hitboxReady && (
+                    <CircleMarker
+                      center={[pop.lat, pop.lng]}
+                      radius={hitboxRadius}
+                      pane="hitboxPane"
+                      pathOptions={{ color: 'transparent', fillOpacity: 0, opacity: 0 }}
+                      interactive
+                      bubblingMouseEvents={false}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedRouteId(null);
+                          setSelectedPopId(pop.id);
+                        },
+                      }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
+          {fire && <FireLayer fire={fire} />}
+          {rain && <RainLayer rain={rain} />}
         </MapContainer>
-        {downRoutes.length > 0 &&
-          !selectedRouteId &&
-          (() => {
-            const currentDownRoute = downRoutes[activeDownRouteIndex];
-            if (!currentDownRoute) return null;
-            const isMultiple = downRoutes.length > 1;
-            return (
-              <div
-                className="jmap-autofocus-panel"
-                style={{
-                  position: 'absolute',
-                  left: 20,
-                  bottom: 20,
-                  zIndex: 800,
-                  minWidth: 280,
-                  maxWidth: 340,
-                  padding: '14px 18px',
-                  background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.88) 100%)',
-                  border: '1px solid rgba(239, 68, 68, 0.5)',
-                  borderRadius: 14,
-                  boxShadow: '0 0 30px rgba(239, 68, 68, 0.25), inset 0 0 20px rgba(239, 68, 68, 0.08)',
-                  backdropFilter: 'blur(12px)',
-                  color: '#f1f5f9',
-                  fontFamily: '"Segoe UI", Roboto, "Helvetica Neue", sans-serif',
-                  animation: 'jmap-hologram-fade 0.4s ease-out',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: -2,
-                    left: 20,
-                    right: 20,
-                    height: 3,
-                    background: 'linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.8), transparent)',
-                    borderRadius: 2,
-                    animation: 'jmap-hologram-scan 2s ease-in-out infinite',
-                  }}
-                />
-                <div
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
-                >
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 700,
-                      color: '#fca5a5',
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.5,
-                    }}
-                  >
-                    {isMultiple ? 'Multiplas Rotas em Falha' : 'Rota em Falha'}
-                  </div>
-                  <div
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: '#ef4444',
-                      boxShadow: '0 0 10px #ef4444',
-                      animation: 'jmap-blink 1s ease-in-out infinite',
-                    }}
-                  />
-                </div>
-                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-                  {currentDownRoute.name || 'Sem nome'}
-                </div>
-                {isMultiple && (
-                  <div
-                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveDownRouteIndex((prev) => (prev - 1 + downRoutes.length) % downRoutes.length)
-                      }
-                      style={{
-                        background: 'rgba(239, 68, 68, 0.2)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: 6,
-                        padding: '4px 12px',
-                        color: '#fca5a5',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                      }}
-                    >
-                      ◀
-                    </button>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                      {activeDownRouteIndex + 1} / {downRoutes.length}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveDownRouteIndex((prev) => (prev + 1) % downRoutes.length)}
-                      style={{
-                        background: 'rgba(239, 68, 68, 0.2)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: 6,
-                        padding: '4px 12px',
-                        color: '#fca5a5',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                      }}
-                    >
-                      ▶
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+        {!selectedRouteId && !selectedPopId && (
+          <OperationalConsole
+            options={options}
+            queryError={data.state === LoadingState.Error}
+            readings={operationalReadings}
+            referenceTime={referenceTime}
+            timeRange={timeRange}
+            filter={filter}
+            onFilter={onFilter ?? setLocalFilter}
+            view="map"
+            expandedPops={[]}
+            onRestore={(saved) => {
+              (onFilter ?? setLocalFilter)(saved.filter);
+              onRestore?.(saved);
+            }}
+            onOptionsChange={onOptionsChange}
+            onLocate={(id) => {
+              const route = routes.find((r) => r.id === id);
+              if (route) {
+                focusRoute(id);
+              }
+            }}
+            onDetails={(id) => {
+              setSelectedRouteId(id);
+              setSelectedPopId(null);
+            }}
+          />
+        )}
         <button
           type="button"
           onClick={() => setStatsCollapsed((prev) => !prev)}
@@ -2446,9 +2247,13 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
               }}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing(0.75) }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>Top 3 piores sinais RX</div>
+              <div style={{ fontSize: theme.typography.bodySmall.fontSize, fontWeight: 600 }}>
+                Top 3 piores sinais RX
+              </div>
               {topRxSignals.length === 0 ? (
-                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Nenhum item RX encontrado.</div>
+                <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
+                  Nenhum item RX encontrado.
+                </div>
               ) : (
                 topRxSignals.map((item) => (
                   <button
@@ -2504,7 +2309,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                       </span>
                       <span
                         style={{
-                          fontSize: 10,
+                          fontSize: theme.typography.bodySmall.fontSize,
                           color: theme.colors.text.secondary,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -2514,15 +2319,19 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         {item.trunkName} • {item.interfaceName}
                       </span>
                     </span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>{item.rxText}</span>
+                    <span style={{ fontSize: theme.typography.bodySmall.fontSize, fontWeight: 700, color: '#f59e0b' }}>
+                      {item.rxText}
+                    </span>
                   </button>
                 ))
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing(1) }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>Todas as rotas</div>
+              <div style={{ fontSize: theme.typography.bodySmall.fontSize, fontWeight: 600 }}>Todas as rotas</div>
               {visibleRouteIncidents.length === 0 && (
-                <div style={{ fontSize: 11, color: theme.colors.text.secondary }}>Nenhuma rota encontrada.</div>
+                <div style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
+                  Nenhuma rota encontrada.
+                </div>
               )}
               {visibleRouteIncidents.map((item) => {
                 const route = routeById.get(item.id);
@@ -2585,7 +2394,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                         </div>
                         <span
                           style={{
-                            fontSize: 10,
+                            fontSize: theme.typography.bodySmall.fontSize,
                             fontWeight: 700,
                             color: item.statusColor,
                             textTransform: 'uppercase',
@@ -2601,7 +2410,7 @@ export function MapView({ options, onOptionsChange, data, timeRange, timeZone }:
                           display: 'grid',
                           gridTemplateColumns: '1fr 1fr',
                           gap: theme.spacing(0.75),
-                          fontSize: 10,
+                          fontSize: theme.typography.bodySmall.fontSize,
                           color: theme.colors.text.secondary,
                         }}
                       >

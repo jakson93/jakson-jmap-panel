@@ -1,7 +1,7 @@
 services:
   grafana:
     container_name: jakson-jmap-panel
-    image: grafana/grafana-oss:12.3.1
+    image: grafana/${GRAFANA_IMAGE:-grafana}:${GRAFANA_VERSION:-12.3.1}
     user: "0"
     ports:
       - "3000:3000"

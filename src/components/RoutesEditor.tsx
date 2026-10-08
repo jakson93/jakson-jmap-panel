@@ -1,4 +1,5 @@
 import React from 'react';
+import { saveEditedItem } from '../optionMerge';
 import { DataFrame, FieldType, SelectableValue, StandardEditorProps } from '@grafana/data';
 import { Button, Field, Input, Modal, Select, Stack } from '@grafana/ui';
 
@@ -14,7 +15,7 @@ import {
 } from '../types';
 import { RouteDrawMap } from './RouteDrawMap';
 
-const ALLOWED_METRIC_IDS = new Set(['download', 'upload']);
+const ALLOWED_METRIC_IDS = new Set(['download', 'upload', 'rx', 'tx']);
 const DEFAULT_METRICS: RouteMetric[] = [
   { id: 'download', label: 'Download (Mbps)', description: 'Consumo de download da interface', enabled: false },
   { id: 'upload', label: 'Upload (Mbps)', description: 'Consumo de upload da interface', enabled: false },
@@ -50,7 +51,10 @@ const createEmptyRoute = (): Route => ({
 
 const cloneRoute = (route: Route): Route => ({
   ...route,
-  metrics: route.metrics.filter((m) => ALLOWED_METRIC_IDS.has(m.id)).map((m) => ({ ...m })),
+  metrics: [
+    ...route.metrics.map((m) => ({ ...m })),
+    ...DEFAULT_METRICS.filter((m) => !route.metrics.some((existing) => existing.id === m.id)).map((m) => ({ ...m })),
+  ],
   extraMetrics: route.extraMetrics.map((m) => ({ ...m })),
   trunks:
     route.trunks?.map((trunk) => ({
@@ -205,6 +209,8 @@ type State = {
   isDrawModalOpen: boolean;
   editingIndex: number | null;
   draftRoute: Route;
+  baseRoute?: Route;
+  saveError?: string;
   drawBackupPoints: RoutePoint[];
   drawMode: 'path' | 'arc';
   arcStart: RoutePoint | null;
@@ -242,6 +248,8 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
       isRouteModalOpen: true,
       editingIndex: null,
       draftRoute: createEmptyRoute(),
+      baseRoute: undefined,
+      saveError: '',
       drawBackupPoints: [],
       drawMode: 'path',
       arcStart: null,
@@ -260,6 +268,8 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
       isRouteModalOpen: true,
       editingIndex: index,
       draftRoute: cloneRoute(route),
+      baseRoute: structuredClone(route),
+      saveError: '',
       drawBackupPoints: [],
       drawMode: 'path',
       arcStart: null,
@@ -274,20 +284,22 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
   };
 
   saveRoute = () => {
-    const { draftRoute, editingIndex } = this.state;
-    const nextRoutes = [...this.routes];
-
-    const distanceKm =
-      draftRoute.distanceKm !== undefined ? draftRoute.distanceKm : computeDistanceKm(draftRoute.points);
-    const routeToSave = { ...draftRoute, distanceKm };
-
-    if (editingIndex === null) {
-      nextRoutes.push(routeToSave);
-    } else {
-      nextRoutes[editingIndex] = routeToSave;
+    const { draftRoute, baseRoute } = this.state;
+    const result = saveEditedItem(this.routes, baseRoute, draftRoute);
+    if (result.conflicts.length) {
+      this.setState({
+        saveError:
+          'Esta rota foi alterada ou removida durante a edição. Feche e reabra o cadastro para revisar as mudanças.',
+      });
+      return;
     }
-
-    this.updateRoutes(nextRoutes);
+    this.updateRoutes(
+      result.value.map((route) =>
+        route.id === draftRoute.id && route.distanceKm === undefined
+          ? { ...route, distanceKm: computeDistanceKm(route.points) }
+          : route
+      )
+    );
     this.setState({ isRouteModalOpen: false, editingIndex: null });
   };
 
@@ -965,6 +977,7 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
             <Button variant="secondary" onClick={this.closeRouteModal}>
               Cancelar
             </Button>
+            {this.state.saveError && <div role="alert">{this.state.saveError}</div>}
             <Button onClick={this.saveRoute}>Salvar rota</Button>
           </Modal.ButtonRow>
         </Stack>
@@ -991,8 +1004,8 @@ export class RoutesEditor extends React.PureComponent<Props, State> {
             <ul style={{ marginTop: 8, paddingLeft: 20 }}>
               <li>Clique no mapa para adicionar pontos a rota</li>
               <li>A rota sera desenhada conectando os pontos na ordem</li>
-              <li>Use \"Desfazer\" para remover o ultimo ponto</li>
-              <li>Use \"Limpar\" para recomecar</li>
+              <li>Use &quot;Desfazer&quot; para remover o ultimo ponto</li>
+              <li>Use &quot;Limpar&quot; para recomecar</li>
               <li>Minimo de 2 pontos necessarios</li>
             </ul>
             <div style={{ marginTop: 8 }}>

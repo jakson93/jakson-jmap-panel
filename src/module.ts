@@ -3,9 +3,109 @@ import { SimplePanel } from './components/SimplePanel';
 import { CaptureButtonEditor } from './components/CaptureButtonEditor';
 import { PopsEditor } from './components/PopsEditor';
 import { RoutesEditor } from './components/RoutesEditor';
+import { SavedViewsEditor } from './components/SavedViewsEditor';
 import { PanelOptions } from './types';
 
 export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions((builder) => {
+  builder.addRadio({
+    path: 'topologyPopStyle',
+    name: 'Representação dos POPs',
+    category: ['Visualização'],
+    defaultValue: 'icon',
+    description: 'Ícones com nome e status, ou os cards completos. Os detalhes permanecem disponíveis ao selecionar.',
+    settings: {
+      options: [
+        { label: 'Ícones', value: 'icon' },
+        { label: 'Cards', value: 'card' },
+      ],
+    },
+  });
+  builder.addBooleanSwitch({
+    path: 'rainEnabled',
+    name: 'Alertas de chuva nas rotas de fibra',
+    category: ['Chuva forte'],
+    defaultValue: false,
+    description:
+      'Avisos vigentes de chuva intensa, acumulado de chuva e tempestade do INMET. O ícone é exibido onde a área de aviso cruza a fibra; não é medição de chuva no local.',
+  });
+  builder.addNumberInput({
+    path: 'rainRefreshSeconds',
+    name: 'Atualização dos avisos (segundos)',
+    category: ['Chuva forte'],
+    defaultValue: 600,
+    settings: { min: 120, max: 3600, step: 60 },
+    showIf: (o) => Boolean(o.rainEnabled),
+  });
+  builder.addBooleanSwitch({
+    path: 'fireEnabled',
+    name: 'Focos de calor próximos da rede',
+    category: ['Focos de calor'],
+    defaultValue: false,
+    description:
+      'Consulta pública do INPE no navegador, próximo dos caminhos geográficos das rotas de fibra. Detecções por satélite, sem confirmação de incêndio.',
+  });
+  builder.addNumberInput({
+    path: 'fireRadiusKm',
+    name: 'Distância de atenção (km)',
+    category: ['Focos de calor'],
+    defaultValue: 5,
+    settings: { min: 0.1, max: 50, step: 0.1 },
+    showIf: (o) => Boolean(o.fireEnabled),
+  });
+  builder.addNumberInput({
+    path: 'fireWindowHours',
+    name: 'Janela de detecção (horas)',
+    category: ['Focos de calor'],
+    defaultValue: 24,
+    description: 'Dados recentes, independentes do período das métricas do Grafana. Cobertura Brasil, últimos 48h.',
+    settings: { min: 1, max: 48, step: 1 },
+    showIf: (o) => Boolean(o.fireEnabled),
+  });
+  builder.addNumberInput({
+    path: 'fireRefreshSeconds',
+    name: 'Atualizar focos a cada (segundos)',
+    category: ['Focos de calor'],
+    defaultValue: 600,
+    settings: { min: 120, max: 3600, step: 60 },
+    showIf: (o) => Boolean(o.fireEnabled),
+  });
+  builder.addNumberInput({
+    path: 'staleAfterSeconds',
+    name: 'Idade máxima da amostra (segundos)',
+    description: 'Após este intervalo o status passa a Sem dados. Também limita lacunas no histórico observado.',
+    category: ['Operação da rede'],
+    defaultValue: 300,
+    settings: { min: 10, max: 2592000, step: 10 },
+  });
+  builder.addNumberInput({
+    path: 'topologyGridSize',
+    name: 'Grade do editor',
+    description: 'Alinha as posições e desvios na topologia. Zero permite movimentação livre.',
+    category: ['Visualização'],
+    defaultValue: 20,
+    settings: { min: 0, max: 100, step: 5 },
+  });
+  builder.addCustomEditor({
+    id: 'savedViews',
+    path: 'savedViews',
+    name: 'Visões salvas',
+    category: ['Operação da rede'],
+    defaultValue: [],
+    editor: SavedViewsEditor,
+  });
+  builder.addRadio({
+    path: 'viewMode',
+    name: 'Exibição inicial',
+    description: 'Mapa geográfico ou topologia com posições independentes.',
+    category: ['Visualização'],
+    defaultValue: 'map',
+    settings: {
+      options: [
+        { label: 'Mapa', value: 'map' },
+        { label: 'Topologia', value: 'topology' },
+      ],
+    },
+  });
   builder.addCustomEditor({
     id: 'routes',
     path: 'routes',
@@ -14,6 +114,49 @@ export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions
     category: ['Cadastro de Rotas'],
     editor: RoutesEditor,
     defaultValue: [],
+  });
+
+  builder.addSelect({
+    path: 'mapLabelMode',
+    name: 'Rótulos dos POPs',
+    description: 'Inteligente evita sobreposição. Os detalhes continuam disponíveis ao selecionar o POP.',
+    category: ['Visualização'],
+    defaultValue: 'smart',
+    settings: {
+      options: [
+        { label: 'Inteligente (sem sobreposição)', value: 'smart' },
+        { label: 'Somente nome', value: 'name' },
+        { label: 'Nome, equipamentos e status', value: 'details' },
+        { label: 'Ao passar o mouse', value: 'hover' },
+      ],
+    },
+  });
+  builder.addRadio({
+    path: 'mapTone',
+    name: 'Contraste do fundo',
+    description: 'Suave reduz o destaque das ruas e cidades para priorizar a rede.',
+    category: ['Visualização'],
+    defaultValue: 'muted',
+    settings: {
+      options: [
+        { label: 'Suave', value: 'muted' },
+        { label: 'Original', value: 'original' },
+      ],
+    },
+  });
+  builder.addSelect({
+    path: 'topologyRouteStyle',
+    name: 'Traçado na topologia',
+    description: 'Aplica-se a ligações sem desvios manuais. O caminho geográfico permanece independente.',
+    category: ['Visualização'],
+    defaultValue: 'curve',
+    settings: {
+      options: [
+        { label: 'Curvas suaves', value: 'curve' },
+        { label: 'Direto', value: 'direct' },
+        { label: 'Ortogonal', value: 'orthogonal' },
+      ],
+    },
   });
 
   builder.addCustomEditor({
