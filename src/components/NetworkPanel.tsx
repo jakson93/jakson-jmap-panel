@@ -621,88 +621,6 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 ))}
             </aside>
           )}
-          {editing && tool === 'connect' && (
-            <div className={styles.connectBar}>
-              <label>
-                Rota
-                <select
-                  aria-label="Rota para conectar"
-                  value={bindRoute}
-                  onChange={(e) => setBindRoute(e.currentTarget.value)}
-                >
-                  <option value="">Criar nova rota</option>
-                  {routes.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      Vincular: {r.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Origem
-                <select
-                  aria-label="Origem da conexão"
-                  value={fromId}
-                  onChange={(e) => {
-                    setFromId(e.currentTarget.value);
-                    setFromPort('');
-                  }}
-                >
-                  <option value="">Selecione</option>
-                  {nodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.pop.name} / {n.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Destino
-                <select
-                  aria-label="Destino da conexão"
-                  value={toId}
-                  onChange={(e) => {
-                    setToId(e.currentTarget.value);
-                    setToPort('');
-                  }}
-                >
-                  <option value="">Selecione</option>
-                  {nodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.pop.name} / {n.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {[
-                { id: fromId, port: fromPort, set: setFromPort, label: 'Porta de origem' },
-                { id: toId, port: toPort, set: setToPort, label: 'Porta de destino' },
-              ].map((side) => {
-                const equipment = nodes.find((n) => n.id === side.id)?.equipment;
-                return (
-                  Boolean(equipment?.ports?.length) && (
-                    <label key={side.label}>
-                      {side.label}
-                      <select value={side.port} onChange={(e) => side.set(e.currentTarget.value)}>
-                        <option value="">Sem porta específica</option>
-                        {equipment?.ports?.map((port) => (
-                          <option key={port.id} value={port.id}>
-                            {port.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )
-                );
-              })}
-              <Button
-                disabled={!nodes.some((n) => n.id === fromId) || !nodes.some((n) => n.id === toId) || fromId === toId}
-                onClick={() => connect(fromId, toId, true)}
-              >
-                Conectar itens
-              </Button>
-            </div>
-          )}
           <div className={styles.zoom}>
             <Button
               variant="secondary"
@@ -725,6 +643,88 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             />
           </div>
         </main>
+        {editing && tool === 'connect' && (
+          <div className={styles.connectBar}>
+            <label>
+              Rota
+              <select
+                aria-label="Rota para conectar"
+                value={bindRoute}
+                onChange={(e) => setBindRoute(e.currentTarget.value)}
+              >
+                <option value="">Criar nova rota</option>
+                {routes.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    Vincular: {r.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Origem
+              <select
+                aria-label="Origem da conexão"
+                value={fromId}
+                onChange={(e) => {
+                  setFromId(e.currentTarget.value);
+                  setFromPort('');
+                }}
+              >
+                <option value="">Selecione</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.pop.name} / {n.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Destino
+              <select
+                aria-label="Destino da conexão"
+                value={toId}
+                onChange={(e) => {
+                  setToId(e.currentTarget.value);
+                  setToPort('');
+                }}
+              >
+                <option value="">Selecione</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.pop.name} / {n.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {[
+              { id: fromId, port: fromPort, set: setFromPort, label: 'Porta de origem' },
+              { id: toId, port: toPort, set: setToPort, label: 'Porta de destino' },
+            ].map((side) => {
+              const equipment = nodes.find((n) => n.id === side.id)?.equipment;
+              return (
+                Boolean(equipment?.ports?.length) && (
+                  <label key={side.label}>
+                    {side.label}
+                    <select value={side.port} onChange={(e) => side.set(e.currentTarget.value)}>
+                      <option value="">Sem porta específica</option>
+                      {equipment?.ports?.map((port) => (
+                        <option key={port.id} value={port.id}>
+                          {port.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )
+              );
+            })}
+            <Button
+              disabled={!nodes.some((n) => n.id === fromId) || !nodes.some((n) => n.id === toId) || fromId === toId}
+              onClick={() => connect(fromId, toId, true)}
+            >
+              Conectar itens
+            </Button>
+          </div>
+        )}
         {(selectedRoute || selectedNode) && !(editing && tool === 'connect') && (
           <section className={styles.inspector} aria-label="Detalhes da seleção">
             <div className={styles.detailTitle}>
@@ -1099,7 +1099,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
             )}
           </section>
         )}
-        <footer className={styles.footer}>
+        <footer className={cx(styles.footer, editing && tool === 'connect' && styles.flowFooter)}>
           <span role="status">
             {message ||
               (editing
@@ -1401,11 +1401,10 @@ function getStyles(t: GrafanaTheme2) {
       marginBottom: t.spacing(1),
     }),
     connectBar: css({
-      position: 'absolute',
+      position: 'relative',
       zIndex: 500,
-      left: t.spacing(1.5),
-      bottom: t.spacing(7),
-      right: t.spacing(16),
+      flexShrink: 0,
+      margin: t.spacing(1.5),
       display: 'flex',
       alignItems: 'flex-end',
       flexWrap: 'wrap',
@@ -1442,6 +1441,7 @@ function getStyles(t: GrafanaTheme2) {
       fontSize: t.typography.bodySmall.fontSize,
       color: t.colors.text.secondary,
     }),
+    flowFooter: css({ position: 'relative', flexShrink: 0 }),
     legend: css({ display: 'flex', gap: t.spacing(1.5) }),
     fullDetails: css({
       position: 'absolute',
