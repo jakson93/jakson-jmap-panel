@@ -14,7 +14,9 @@ Use a branch `codex/mapa-topologia` em homologação. O original está preservad
 
 Veja o [passo a passo para testar, instalar e reverter](docs/TESTAR-E-REVERTER.md), incluindo um Grafana separado via `compose.homolog.yaml` e um dashboard com dados demonstrativos.
 
-[Baixar o ZIP compilado 1.5.0 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.5.0-20261008/jakson-jmap-panel-1.5.0.zip).
+[Baixar o ZIP compilado 1.6.0 para homologação](https://github.com/jakson93/jakson-jmap-panel/releases/download/homolog-1.6.0-20261013/jakson-jmap-panel-1.6.0.zip).
+
+A versão 1.6 compara potência RX entre duas datas do período carregado, apresenta RX em cada coleta, diferença em dB e **Melhorou/Piorou**. Em **Atenuação óptica**, o alerta visual padrão identifica queda de **2 dB em até 5 minutos**, confirmada em duas coletas, mesmo com a interface online. A referência usa a mediana das coletas anteriores e fica preservada durante a sessão ao vivo até recuperação confirmada. Mapa e topologia compartilham a mesma análise. Veja [comparação e alertas ópticos](docs/ATENUACAO-OPTICA.md).
 
 A versão 1.5 mantém o histórico RX inteiro visível após quedas: escala considerando todas as amostras do período, faixa de RX baixo em vermelho e última leitura antes da queda observada. Preserva lacunas e combina fragmentos da consulta por horário. O histórico aberto acompanha novas leituras, sem inventar dados ausentes. O Grafana precisa consultar o histórico, e não apenas o último valor.
 

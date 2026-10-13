@@ -1,5 +1,33 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
+test('relative RX loss alerts in both views while the route is online and supports date comparison', async ({
+  gotoPanelEditPage,
+  readProvisionedDashboard,
+}) => {
+  const dashboard = await readProvisionedDashboard({ fileName: 'jmap-attenuation-demo.json' });
+  const editor = await gotoPanelEditPage({ dashboard, id: '1' });
+  const panel = editor.panel.locator;
+  await panel.getByRole('button', { name: /⚠ Atenuação · 1/ }).click();
+  const optical = panel.getByRole('region', { name: 'Alertas de atenuação óptica' });
+  await expect(optical).toContainText('Queda de 2.50 dB');
+  await expect(optical).toContainText('Interface A · Centro');
+  await optical.getByRole('button', { name: 'Detalhar rota', exact: true }).click();
+  const detail = panel.getByRole('dialog', { name: 'Detalhes da rota' });
+  await expect(detail).toContainText('Online');
+  await detail.getByRole('button', { name: /Interface A · Centro/ }).click();
+  const history = panel.getByRole('dialog', { name: 'Histórico do sinal RX' });
+  await expect(history.getByRole('alert')).toContainText('Possível atenuação');
+  const comparison = history.getByRole('region', { name: 'Comparação de potência RX' });
+  await expect(comparison).toContainText('Piorou 2.50 dB');
+  await expect(comparison.getByLabel('Data A')).toBeVisible();
+  await expect(comparison.getByLabel('Data B')).toBeVisible();
+  await history.getByRole('button', { name: 'Fechar', exact: true }).click();
+  await detail.getByRole('button', { name: 'Fechar', exact: true }).click();
+  await panel.getByRole('button', { name: 'Topologia', exact: true }).click();
+  await panel.getByRole('button', { name: /⚠ Atenuação · 1/ }).click();
+  await expect(panel.getByRole('region', { name: 'Alertas de atenuação óptica' })).toContainText('Queda de 2.50 dB');
+});
+
 test('POP icon selection applies to the same original map configuration without losing route metrics', async ({
   gotoPanelEditPage,
   readProvisionedDashboard,
@@ -77,7 +105,7 @@ test('RX history retains the healthy signal after loss, with full scale and a re
   const detail = panel.getByRole('dialog', { name: 'Detalhes da rota' });
   await detail.getByRole('button', { name: /Interface A · Centro/ }).click();
   const history = panel.getByRole('dialog', { name: 'Histórico do sinal RX' });
-  await expect(history.getByText('-40.00 dBm', { exact: true })).toBeVisible();
+  await expect(history.getByText('-40.00 dBm', { exact: true }).first()).toBeVisible();
   await expect(history.getByText('Antes da última queda observada', { exact: true })).toBeVisible();
   const coordinates = await history
     .locator('[data-signal-segment]')

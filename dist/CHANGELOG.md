@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0 (Homologação — 2026-10-13)
+
+- Compara RX entre duas datas do período carregado, com horários efetivos, potência em dBm, diferença em dB e indicação de melhora/piora. Respeita o fuso do Grafana e não preenche lacunas.
+- Acrescenta alerta visual configurável de possível atenuação, padrão 2 dB em até 5 minutos e confirmação em duas coletas. Monitora itens RX das interfaces e rotas, mesmo com status online.
+- Mantém a referência do evento até recuperação confirmada, com histerese; preserva referências observadas nesta sessão quando a janela ao vivo avança.
+- Compartilha análise entre mapa, topologia e histórico RX, identifica dados antigos, análise insuficiente, manutenção e falha de consulta. Não altera o status original da interface.
+- Mantém as métricas, opções, ID, camada ambiental e versões anteriores. Sem integração de notificações; avaliação visual depende do painel aberto e das consultas do Grafana.
+
 ## 1.5.0 (Homologação — 2026-10-08)
 
 - Corrige a escala do histórico RX após quedas: todo o histórico fornecido permanece visível, inclusive valores anteriores a −40 dBm. Acrescenta leitura anterior à última queda observada, faixa crítica, lacunas explícitas e gráfico responsivo.

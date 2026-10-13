@@ -3,18 +3,31 @@ import { css } from '@emotion/css';
 import { dateTimeFormat, GrafanaTheme2 } from '@grafana/data';
 import { TimeZone } from '@grafana/schema';
 import { useStyles2, useTheme2 } from '@grafana/ui';
+import {
+  OpticalSettings,
+  OpticalState,
+  opticalSettings as defaultOpticalSettings,
+  signalAttenuation,
+} from '../opticalModel';
+import { SignalComparison } from './SignalComparison';
 import { RX_CRITICAL, SignalSeries, signalSegments, signalSummary } from '../signalHistory';
+
+const FALLBACK_OPTICAL_SETTINGS = defaultOpticalSettings();
 
 export function SignalTrendChart({
   series,
   from,
   to,
   timeZone,
+  opticalSettings,
+  attenuationState,
 }: {
   series: SignalSeries;
   from: number;
   to: number;
   timeZone?: TimeZone;
+  opticalSettings?: OpticalSettings;
+  attenuationState?: OpticalState;
 }) {
   const theme = useTheme2();
   const styles = useStyles2(getStyles);
@@ -30,7 +43,13 @@ export function SignalTrendChart({
     observer.observe(root.current);
     return () => observer.disconnect();
   }, []);
+  const settings = opticalSettings ?? FALLBACK_OPTICAL_SETTINGS;
+  const attenuation = React.useMemo(
+    () => attenuationState ?? signalAttenuation(series, settings, to),
+    [attenuationState, series, settings, to]
+  );
   const summary = React.useMemo(() => signalSummary(series), [series]);
+  const beforeDrop = summary.beforeLoss ?? attenuation.event?.reference;
   const segments = React.useMemo(() => signalSegments(series, Math.max(32, width / 4)), [series, width]);
   const points = segments.flat();
   const height = parseFloat(theme.spacing(30));
@@ -54,6 +73,22 @@ export function SignalTrendChart({
         <p role="status">Sem amostras RX no período selecionado.</p>
       ) : (
         <>
+          {settings.enabled && attenuation.state === 'active' && attenuation.event && (
+            <div className={styles.alert} role="alert">
+              <strong>
+                {attenuation.event.recovering
+                  ? 'Recuperação em confirmação'
+                  : `Possível atenuação · queda de ${attenuation.event.dropDb.toFixed(2)} dB`}
+              </strong>
+              <small>
+                Referência {attenuation.event.baseline.toFixed(2)} dBm → RX {attenuation.event.current.value.toFixed(2)}{' '}
+                dBm. Queda confirmada em duas coletas.
+              </small>
+            </div>
+          )}
+          {settings.enabled && attenuation.state === 'pending' && (
+            <p role="status">Queda de RX em confirmação: aguardando a segunda coleta.</p>
+          )}
           <div className={styles.period} role="group" aria-label="Intervalo do gráfico RX">
             <button type="button" aria-pressed={period === 'samples'} onClick={() => setPeriod('samples')}>
               Intervalo com amostras
@@ -70,12 +105,8 @@ export function SignalTrendChart({
             </div>
             <div>
               <small>Antes da última queda observada</small>
-              <strong>
-                {summary.beforeLoss ? `${summary.beforeLoss.value.toFixed(2)} dBm` : 'Não identificado no período'}
-              </strong>
-              <small>
-                {summary.beforeLoss ? format(summary.beforeLoss.time) : 'Histórico fornecido pela consulta'}
-              </small>
+              <strong>{beforeDrop ? `${beforeDrop.value.toFixed(2)} dBm` : 'Não identificado no período'}</strong>
+              <small>{beforeDrop ? format(beforeDrop.time) : 'Histórico fornecido pela consulta'}</small>
             </div>
           </div>
           <svg
@@ -192,6 +223,7 @@ export function SignalTrendChart({
                 : 'Passe o cursor para consultar valores'}
             </span>
           </div>
+          <SignalComparison key={timeZone} series={series} timeZone={timeZone} toleranceMs={settings.maxGapMs} />
           {series.values.some((v) => v === null) && (
             <small>Lacunas representam ausência de dados; não foram preenchidas.</small>
           )}
@@ -209,6 +241,14 @@ export function SignalTrendChart({
 }
 function getStyles(theme: GrafanaTheme2) {
   return {
+    alert: css({
+      padding: theme.spacing(1.5),
+      marginBottom: theme.spacing(1.5),
+      background: theme.colors.warning.transparent,
+      border: `1px solid ${theme.colors.warning.border}`,
+      borderRadius: theme.shape.radius.default,
+      strong: { color: theme.colors.warning.text },
+    }),
     period: css({
       display: 'flex',
       flexWrap: 'wrap',

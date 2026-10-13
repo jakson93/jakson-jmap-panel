@@ -28,6 +28,7 @@ jest.mock('@grafana/ui', () => ({
 jest.mock('./useOperationalReadings', () => ({
   useOperationalReadings: () => ({ readings: new Map(), referenceTime: 0 }),
 }));
+jest.mock('./OpticalAlerts', () => ({ OpticalAlerts: () => null }));
 jest.mock('./OperationalConsole', () => ({ OperationalConsole: () => null }));
 jest.mock('./NetworkCanvas', () => ({
   NetworkCanvas: (props: {

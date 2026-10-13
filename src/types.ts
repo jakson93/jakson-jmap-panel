@@ -164,6 +164,9 @@ export type Pop = {
 };
 
 export interface PanelOptions {
+  attenuationEnabled?: boolean;
+  attenuationDropDb?: number;
+  attenuationWindowMinutes?: number;
   staleAfterSeconds?: number;
   topologyGridSize?: number;
   savedViews?: SavedNetworkView[];

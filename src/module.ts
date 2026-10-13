@@ -7,6 +7,32 @@ import { SavedViewsEditor } from './components/SavedViewsEditor';
 import { PanelOptions } from './types';
 
 export const plugin = new PanelPlugin<PanelOptions>(SimplePanel).setPanelOptions((builder) => {
+  builder.addBooleanSwitch({
+    path: 'attenuationEnabled',
+    name: 'Alertar queda repentina de RX',
+    category: ['Atenuação óptica'],
+    defaultValue: true,
+    description:
+      'Alerta visual no mapa e na topologia, mesmo com a interface online. Usa o histórico recebido, sem integração de notificações.',
+  });
+  builder.addNumberInput({
+    path: 'attenuationDropDb',
+    name: 'Queda mínima de potência (dB)',
+    category: ['Atenuação óptica'],
+    defaultValue: 2,
+    settings: { min: 0.1, max: 30, step: 0.1 },
+    showIf: (o) => o.attenuationEnabled !== false,
+  });
+  builder.addNumberInput({
+    path: 'attenuationWindowMinutes',
+    name: 'Janela da queda (minutos)',
+    category: ['Atenuação óptica'],
+    defaultValue: 5,
+    settings: { min: 1, max: 60, step: 1 },
+    description:
+      'Compara com a mediana das coletas anteriores nesta janela. Confirma a queda em duas coletas e a recuperação em duas coletas acima da metade do limite de perda.',
+    showIf: (o) => o.attenuationEnabled !== false,
+  });
   builder.addRadio({
     path: 'topologyPopStyle',
     name: 'Representação dos POPs',

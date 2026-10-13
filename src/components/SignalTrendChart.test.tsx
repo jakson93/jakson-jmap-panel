@@ -10,7 +10,7 @@ test('keeps the previous signal on screen after a drop and updates while the his
   const series = { times: [from, from + 60000, to], values: [-24, -23.5, -40] };
   const view = render(<SignalTrendChart series={series} from={from} to={to} timeZone="utc" />);
   expect(screen.getByText('-23.50 dBm')).toBeTruthy();
-  expect(screen.getByText('-40.00 dBm')).toBeTruthy();
+  expect(screen.getAllByText('-40.00 dBm')[0]).toBeTruthy();
   const lines = [...view.container.querySelectorAll('[data-signal-segment]')];
   expect(lines).toHaveLength(2);
   for (const line of lines) {
@@ -25,7 +25,7 @@ test('keeps the previous signal on screen after a drop and updates while the his
       timeZone="utc"
     />
   );
-  expect(screen.getByText('-22.00 dBm')).toBeTruthy();
+  expect(screen.getAllByText('-22.00 dBm')[0]).toBeTruthy();
   expect(screen.getByText('-23.50 dBm')).toBeTruthy();
 });
 test('null samples break the line and an empty query is not replaced by data from another period', () => {

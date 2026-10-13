@@ -6,6 +6,8 @@ import { Button, Icon, useStyles2, useTheme2 } from '@grafana/ui';
 import { mergeOptions } from '../optionMerge';
 import { useFireMonitoring } from './useFireMonitoring';
 import { FireControls } from './FireLayer';
+import { useOpticalMonitoring } from './useOpticalMonitoring';
+import { OpticalAlerts } from './OpticalAlerts';
 import { useRainMonitoring } from './useRainMonitoring';
 import { RainControls } from './RainLayer';
 import { PopIconPicker } from './PopIconPicker';
@@ -111,6 +113,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
     [current, nodes, expanded, editing, legacyLayout.paths]
   );
   const { readings, referenceTime } = useOperationalReadings(data, timeRange, current.staleAfterSeconds, timeZone);
+  const optical = useOpticalMonitoring(data, current, timeRange, referenceTime);
   const filtered = React.useMemo(
     () => (editing ? current : filterNetwork(current, filter, readings)),
     [current, filter, readings, editing]
@@ -324,6 +327,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           options={options}
           fire={fire}
           rain={rain}
+          optical={optical}
           onOptionsChange={onOptionsChange}
           data={data}
           timeRange={timeRange}
@@ -395,6 +399,14 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           </button>
         </div>
         <div className={styles.actions}>
+          <OpticalAlerts
+            monitoring={optical}
+            timeZone={timeZone}
+            onDetails={(id) => {
+              selectRoute(id);
+              setFullDetails(true);
+            }}
+          />
           {view === 'map' && (
             <RainControls
               rain={rain}
@@ -1248,6 +1260,7 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
                 options={current}
                 fire={fire}
                 rain={rain}
+                optical={optical}
                 onOptionsChange={onOptionsChange}
                 data={data}
                 timeRange={timeRange}

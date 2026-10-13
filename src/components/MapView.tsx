@@ -1,4 +1,6 @@
 import React from 'react';
+import { OpticalAlerts } from './OpticalAlerts';
+import { OpticalMonitoring } from './useOpticalMonitoring';
 import { SignalTrendChart } from './SignalTrendChart';
 import { buildSignalSeries, signalWindow } from '../signalHistory';
 import { ConfiguredMapView } from './ConfiguredMapView';
@@ -41,6 +43,7 @@ type Props = {
   tools?: React.ReactNode;
   fire?: FireMonitoring;
   rain?: RainMonitoring;
+  optical?: OpticalMonitoring;
   filter?: NetworkFilter;
   onFilter?: (filter: NetworkFilter) => void;
   onRestore?: (view: SavedNetworkView) => void;
@@ -457,6 +460,7 @@ export function MapView({
   tools,
   fire,
   rain,
+  optical,
   filter: externalFilter,
   onFilter,
   onRestore,
@@ -952,9 +956,19 @@ export function MapView({
       style={{ height: '100%', minHeight: tools ? theme.spacing(48) : undefined, width: '100%', display: 'flex' }}
     >
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-        {(tools || fire?.enabled || rain?.enabled) && (
+        {(tools || fire?.enabled || rain?.enabled || optical?.settings.enabled) && (
           <div className={presentation.tools}>
             {tools}
+            {optical && (
+              <OpticalAlerts
+                monitoring={optical}
+                timeZone={timeZone}
+                onDetails={(id) => {
+                  setSelectedRouteId(id);
+                  setSelectedPopId(null);
+                }}
+              />
+            )}
             {rain && (
               <RainControls
                 rain={rain}
@@ -1709,6 +1723,10 @@ export function MapView({
                         from={timeRange.from.valueOf()}
                         to={timeRange.to.valueOf()}
                         timeZone={timeZone}
+                        opticalSettings={optical?.settings}
+                        attenuationState={optical?.channels.find(
+                          (channel) => channel.routeId === selectedRouteId && channel.item === rxHistory.item.trim()
+                        )}
                       />
                       <div
                         style={{
