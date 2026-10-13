@@ -399,14 +399,16 @@ export function NetworkPanel({ options, onOptionsChange, data, timeRange, timeZo
           </button>
         </div>
         <div className={styles.actions}>
-          <OpticalAlerts
-            monitoring={optical}
-            timeZone={timeZone}
-            onDetails={(id) => {
-              selectRoute(id);
-              setFullDetails(true);
-            }}
-          />
+          {!editing && (
+            <OpticalAlerts
+              monitoring={optical}
+              timeZone={timeZone}
+              onDetails={(id) => {
+                selectRoute(id);
+                setFullDetails(true);
+              }}
+            />
+          )}
           {view === 'map' && (
             <RainControls
               rain={rain}
