@@ -1,0 +1,6 @@
+apiVersion: 1
+datasources:
+  - name: JMAP TestData
+    uid: jmap-testdata
+    type: grafana-testdata-datasource
+    access: proxy

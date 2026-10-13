@@ -1,0 +1,15 @@
+name: jmap-homolog
+services:
+  grafana:
+    image: grafana/grafana:12.3.1
+    ports:
+      - "127.0.0.1:3011:3000"
+    volumes:
+      - jmap-homolog-data:/var/lib/grafana
+      - ./dist:/var/lib/grafana/plugins/jakson-jmap-panel:ro
+      - ./provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: jakson-jmap-panel
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+volumes:
+  jmap-homolog-data:
